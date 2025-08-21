@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Database, Trash2, AlertCircle, Loader2, Eye } from "lucide-react"
-import { type DatabaseConfig, DatabaseManager, type DatabaseTable } from "@/lib/database-manager"
+import { type DatabaseConfig, type DatabaseTable } from "@/lib/database-manager"
+import { ConnectionStorage } from "@/lib/connection-storage"
 
 interface DatabaseConnectionListProps {
   connections: DatabaseConfig[]
@@ -27,8 +28,20 @@ export function DatabaseConnectionList({
     setError(null)
 
     try {
-      const tables = await DatabaseManager.getTables(config)
-      onConnectionSelected(config, tables)
+      const response = await fetch('/api/database/get-tables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+      const data = await response.json()
+      
+      if (data.error) {
+        setError(data.message || "Failed to load database tables")
+        return
+      }
+      
+      // Always proceed, even with empty tables - user can create new tables
+      onConnectionSelected(config, data.tables || [])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load database tables")
     } finally {
@@ -37,7 +50,7 @@ export function DatabaseConnectionList({
   }
 
   const handleRemoveConnection = (id: string) => {
-    DatabaseManager.removeConnection(id)
+    ConnectionStorage.removeConnection(id)
     onConnectionRemoved(id)
   }
 
