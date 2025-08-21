@@ -1,0 +1,336 @@
+"use client"
+
+import { useState, useCallback } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Upload, Database, FileSpreadsheet, Zap, CheckCircle, AlertCircle, Loader2, Settings, Code } from "lucide-react"
+import { FileUploadZone } from "@/components/file-upload-zone"
+import { ExcelPreview } from "@/components/excel-preview"
+import { DatabaseConnectionForm } from "@/components/database-connection-form"
+import { DatabaseConnectionList } from "@/components/database-connection-list"
+import { DataMappingInterface } from "@/components/data-mapping-interface"
+import { SQLGenerationInterface } from "@/components/sql-generation-interface"
+import { ResultsDashboard } from "@/components/results-dashboard"
+import { ExcelParser, type ParsedData } from "@/lib/excel-parser"
+import { type DatabaseConfig, DatabaseManager, type DatabaseTable } from "@/lib/database-manager"
+import type { SheetMapping } from "@/lib/data-mapper"
+import { OperationTracker, type OperationResult } from "@/lib/operation-tracker"
+
+const workflowSteps = [
+  { id: 1, name: "Upload Excel", icon: Upload, status: "current" },
+  { id: 2, name: "Preview Data", icon: FileSpreadsheet, status: "upcoming" },
+  { id: 3, name: "Connect Database", icon: Database, status: "upcoming" },
+  { id: 4, name: "Map Fields", icon: Settings, status: "upcoming" },
+  { id: 5, name: "Generate SQL", icon: Code, status: "upcoming" },
+]
+
+export default function HomePage() {
+  const [currentStep, setCurrentStep] = useState(1)
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+  const [parsedData, setParsedData] = useState<ParsedData | null>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [processingError, setProcessingError] = useState<string | null>(null)
+  const [savedConnections, setSavedConnections] = useState<DatabaseConfig[]>([])
+  const [selectedConnection, setSelectedConnection] = useState<DatabaseConfig | null>(null)
+  const [databaseTables, setDatabaseTables] = useState<DatabaseTable[]>([])
+  const [sheetMappings, setSheetMappings] = useState<SheetMapping[]>([])
+  const [operationResult, setOperationResult] = useState<OperationResult | null>(null)
+  const [showSQLView, setShowSQLView] = useState(false)
+
+  const handleFileUpload = useCallback((files: File[]) => {
+    setUploadedFiles(files)
+    setProcessingError(null)
+  }, [])
+
+  const handleAnalyzeFiles = useCallback(async () => {
+    if (uploadedFiles.length === 0) return
+
+    setIsProcessing(true)
+    setProcessingError(null)
+
+    try {
+      const parsed = await ExcelParser.parseFiles(uploadedFiles)
+      setParsedData(parsed)
+
+      if (parsed.errors.length > 0) {
+        setProcessingError(`Some files had issues: ${parsed.errors.join(", ")}`)
+      }
+
+      if (parsed.files.length > 0) {
+        setCurrentStep(2)
+      }
+    } catch (error) {
+      setProcessingError(error instanceof Error ? error.message : "Failed to analyze files")
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [uploadedFiles])
+
+  const handleProceedToDatabase = useCallback(() => {
+    setCurrentStep(3)
+    setSavedConnections(DatabaseManager.getAllConnections())
+  }, [])
+
+  const handleConnectionSaved = useCallback((config: DatabaseConfig) => {
+    setSavedConnections((prev) => [...prev, config])
+  }, [])
+
+  const handleConnectionRemoved = useCallback((id: string) => {
+    setSavedConnections((prev) => prev.filter((conn) => conn.id !== id))
+  }, [])
+
+  const handleConnectionSelected = useCallback((config: DatabaseConfig, tables: DatabaseTable[]) => {
+    setSelectedConnection(config)
+    setDatabaseTables(tables)
+    setCurrentStep(4)
+  }, [])
+
+  const handleMappingComplete = useCallback((mappings: SheetMapping[]) => {
+    setSheetMappings(mappings)
+    setCurrentStep(5)
+  }, [])
+
+  const handleExecuteSQL = useCallback(
+    async (statements: string[]) => {
+      if (!selectedConnection) return
+
+      setIsProcessing(true)
+
+      try {
+        // Create operation tracking
+        const operationId = OperationTracker.createOperation("import", {
+          databaseType: selectedConnection.type,
+          databaseName: selectedConnection.database,
+          connectionName: selectedConnection.name,
+          batchSize: 1000,
+          useTransactions: true,
+        })
+
+        // Simulate SQL execution with realistic timing
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+
+        // Generate mock result for demonstration
+        const result = OperationTracker.generateMockResult()
+        setOperationResult(result)
+        setCurrentStep(6) // Move to results view
+      } catch (error) {
+        setProcessingError(error instanceof Error ? error.message : "Failed to execute SQL")
+      } finally {
+        setIsProcessing(false)
+      }
+    },
+    [selectedConnection],
+  )
+
+  const handleStartNew = useCallback(() => {
+    // Reset all state
+    setCurrentStep(1)
+    setUploadedFiles([])
+    setParsedData(null)
+    setProcessingError(null)
+    setSelectedConnection(null)
+    setDatabaseTables([])
+    setSheetMappings([])
+    setOperationResult(null)
+    setShowSQLView(false)
+  }, [])
+
+  const handleViewSQL = useCallback(() => {
+    setShowSQLView(true)
+    setCurrentStep(5) // Go back to SQL generation view
+  }, [])
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b border-border bg-card">
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">Excel Database Manager</h1>
+              <p className="text-sm text-muted-foreground">Professional Excel to database operations</p>
+            </div>
+            <Badge variant="secondary" className="bg-accent text-accent-foreground">
+              Beta
+            </Badge>
+          </div>
+        </div>
+      </header>
+
+      {/* Workflow Progress - Hide when showing results */}
+      {currentStep < 6 && (
+        <div className="border-b border-border bg-card">
+          <div className="container mx-auto px-6 py-6">
+            <div className="flex items-center justify-between">
+              {workflowSteps.map((step, index) => (
+                <div key={step.id} className="flex items-center">
+                  <div
+                    className={`flex items-center justify-center w-10 h-10 rounded-full border-2 ${
+                      step.id <= currentStep
+                        ? "bg-primary border-primary text-primary-foreground"
+                        : "bg-background border-border text-muted-foreground"
+                    }`}
+                  >
+                    {step.id < currentStep ? <CheckCircle className="w-5 h-5" /> : <step.icon className="w-5 h-5" />}
+                  </div>
+                  <div className="ml-3">
+                    <p
+                      className={`text-sm font-medium ${
+                        step.id <= currentStep ? "text-foreground" : "text-muted-foreground"
+                      }`}
+                    >
+                      {step.name}
+                    </p>
+                  </div>
+                  {index < workflowSteps.length - 1 && (
+                    <div className={`w-16 h-0.5 mx-6 ${step.id < currentStep ? "bg-primary" : "bg-border"}`} />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <main className="container mx-auto px-6 py-8">
+        {/* Step 1: File Upload */}
+        {currentStep === 1 && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="w-5 h-5 text-primary" />
+                    Upload Excel Files
+                  </CardTitle>
+                  <CardDescription>Upload one or more Excel files (.xlsx, .xls) to begin processing</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <FileUploadZone onFileUpload={handleFileUpload} />
+
+                  {uploadedFiles.length > 0 && (
+                    <div className="mt-6">
+                      <h4 className="text-sm font-medium text-foreground mb-3">Uploaded Files</h4>
+                      <div className="space-y-2">
+                        {uploadedFiles.map((file, index) => (
+                          <div key={index} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                            <div className="flex items-center gap-3">
+                              <FileSpreadsheet className="w-4 h-4 text-primary" />
+                              <span className="text-sm font-medium">{file.name}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {(file.size / 1024 / 1024).toFixed(2)} MB
+                              </Badge>
+                            </div>
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {processingError && (
+                    <Alert className="mt-4">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>{processingError}</AlertDescription>
+                    </Alert>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Sidebar */}
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Quick Stats</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Files Uploaded</span>
+                    <span className="font-semibold">{uploadedFiles.length}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Sheets Detected</span>
+                    <span className="font-semibold">{parsedData?.totalSheets || "-"}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Records Found</span>
+                    <span className="font-semibold">{parsedData?.totalRows?.toLocaleString() || "-"}</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {uploadedFiles.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Next Steps</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Button className="w-full" size="lg" onClick={handleAnalyzeFiles} disabled={isProcessing}>
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          Analyze Files
+                          <Zap className="w-4 h-4 ml-2" />
+                        </>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Data Preview */}
+        {currentStep === 2 && parsedData && (
+          <ExcelPreview files={parsedData.files} onProceedToMapping={handleProceedToDatabase} />
+        )}
+
+        {/* Step 3: Database Connection */}
+        {currentStep === 3 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <DatabaseConnectionForm onConnectionSaved={handleConnectionSaved} />
+            <DatabaseConnectionList
+              connections={savedConnections}
+              onConnectionRemoved={handleConnectionRemoved}
+              onConnectionSelected={handleConnectionSelected}
+            />
+          </div>
+        )}
+
+        {/* Step 4: Data Mapping */}
+        {currentStep === 4 && parsedData && (
+          <DataMappingInterface
+            excelFiles={parsedData.files}
+            databaseTables={databaseTables}
+            onMappingComplete={handleMappingComplete}
+          />
+        )}
+
+        {/* Step 5: SQL Generation */}
+        {currentStep === 5 && parsedData && selectedConnection && (
+          <SQLGenerationInterface
+            sheetMappings={sheetMappings}
+            excelFiles={parsedData.files}
+            databaseTables={databaseTables}
+            databaseConfig={selectedConnection}
+            onExecuteSQL={handleExecuteSQL}
+          />
+        )}
+
+        {/* Step 6: Results Dashboard */}
+        {currentStep === 6 && operationResult && (
+          <ResultsDashboard operationResult={operationResult} onStartNew={handleStartNew} onViewSQL={handleViewSQL} />
+        )}
+      </main>
+    </div>
+  )
+}
