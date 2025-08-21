@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Database, CheckCircle, AlertCircle, Eye, EyeOff } from "lucide-react"
-import { type DatabaseConfig, DatabaseManager, type ConnectionTestResult } from "@/lib/database-manager"
+import { type DatabaseConfig, type ConnectionTestResult } from "@/lib/database-manager"
+import { ConnectionStorage } from "@/lib/connection-storage"
 
 interface DatabaseConnectionFormProps {
   onConnectionSaved: (config: DatabaseConfig) => void
@@ -54,7 +55,12 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
     setTestResult(null)
 
     try {
-      const result = await DatabaseManager.testConnection(config as DatabaseConfig)
+      const response = await fetch('/api/database/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+      const result = await response.json()
       setTestResult(result)
     } catch (error) {
       setTestResult({
@@ -86,7 +92,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
         type: config.type!,
       } as DatabaseConfig
 
-      DatabaseManager.saveConnection(fullConfig)
+      ConnectionStorage.saveConnection(fullConfig)
       onConnectionSaved(fullConfig)
 
       // Reset form
@@ -286,7 +292,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
             <Label>Connection String Preview</Label>
             <div className="p-3 bg-muted rounded-lg">
               <code className="text-sm text-muted-foreground break-all">
-                {DatabaseManager.generateConnectionString(config as DatabaseConfig)}
+                {ConnectionStorage.generateConnectionString(config as DatabaseConfig)}
               </code>
             </div>
           </div>
