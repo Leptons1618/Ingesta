@@ -11,11 +11,10 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Loader2, Plus, Save, Eye, Database, AlertCircle, CheckCircle, Trash2 } from "lucide-react"
+import { Loader2, Plus, Save, Eye, Database, AlertCircle, CheckCircle, Trash2, Lightbulb, Info, ArrowRight } from "lucide-react"
 import { type DatabaseConfig } from "@/lib/database-manager"
 import { DataTypeDetector, type TableCreationConfig, type ColumnAnalysis } from "@/lib/data-type-detector"
 import { DataTransformer } from "@/lib/data-transformer"
-import type { ExcelFile } from "@/lib/excel-parser"
 
 interface TableCreationInterfaceProps {
   databaseConfig: DatabaseConfig
@@ -39,22 +38,104 @@ export function TableCreationInterface({
   const [tableConfigs, setTableConfigs] = useState<TableCreationConfig[]>([])
   const [isCreating, setIsCreating] = useState(false)
   const [creationResults, setCreationResults] = useState<Array<{ success: boolean; message: string; tableName: string }>>([])
+  const [analysisInsights, setAnalysisInsights] = useState<string[]>([])
 
   const currentSheet = selectedSheets[currentSheetIndex]
   const currentConfig = tableConfigs[currentSheetIndex]
 
-  // Auto-analyze sheets when component mounts
+  // Auto-analyze sheets when component mounts with intelligent insights
   useEffect(() => {
-    const configs = selectedSheets.map(sheet => 
-      DataTypeDetector.analyzeSheet(sheet.data, sheet.sheetName, sheet.headers)
-    )
+    const configs = selectedSheets.map(sheet => {
+      const config = DataTypeDetector.analyzeSheet(sheet.data, sheet.sheetName, sheet.headers)
+      
+      // Adapt types for the target database
+      config.columns = config.columns.map(col => ({
+        ...col,
+        suggestedType: DataTypeDetector.adaptTypeForDatabase(col.suggestedType, databaseConfig.type)
+      }))
+      
+      return config
+    })
+    
     setTableConfigs(configs)
-  }, [selectedSheets])
+    
+    // Generate insights for current sheet
+    if (configs[0]) {
+      generateInsights(configs[0], selectedSheets[0])
+    }
+  }, [selectedSheets, databaseConfig.type])
+
+  // Update insights when navigating between sheets
+  useEffect(() => {
+    if (currentConfig && currentSheet) {
+      generateInsights(currentConfig, currentSheet)
+    }
+  }, [currentSheetIndex])
+
+  const generateInsights = (config: TableCreationConfig, sheet: any) => {
+    const insights: string[] = []
+    
+    // Data quality insights
+    const totalNulls = config.columns.reduce((sum, col) => sum + col.nullCount, 0)
+    const totalValues = config.columns.reduce((sum, col) => sum + col.totalCount, 0)
+    const nullPercentage = (totalNulls / totalValues) * 100
+    
+    if (nullPercentage > 30) {
+      insights.push(`⚠️ High null values detected (${nullPercentage.toFixed(1)}%). Consider data cleaning.`)
+    } else if (nullPercentage > 10) {
+      insights.push(`ℹ️ Moderate null values (${nullPercentage.toFixed(1)}%). Columns are set as nullable where needed.`)
+    } else {
+      insights.push(`✅ Good data quality detected with minimal null values (${nullPercentage.toFixed(1)}%).`)
+    }
+    
+    // Primary key suggestions
+    const uniqueColumns = config.columns.filter(col => 
+      col.uniqueValues === col.totalCount - col.nullCount && col.nullCount === 0
+    )
+    
+    if (uniqueColumns.length > 0) {
+      insights.push(`🔑 Found ${uniqueColumns.length} potential primary key column(s): ${uniqueColumns.map(c => c.name).join(', ')}`)
+    } else {
+      insights.push(`💡 No natural primary key found. An auto-generated 'id' column will be added.`)
+    }
+    
+    // Data type insights
+    const numericCols = config.columns.filter(col => 
+      col.suggestedType.includes('INT') || col.suggestedType.includes('DECIMAL') || col.suggestedType.includes('REAL')
+    ).length
+    
+    const dateCols = config.columns.filter(col => 
+      col.suggestedType.includes('DATE') || col.suggestedType.includes('TIMESTAMP')
+    ).length
+    
+    if (numericCols > 0 || dateCols > 0) {
+      insights.push(`📊 Detected ${numericCols} numeric and ${dateCols} date/time columns with auto-type detection.`)
+    }
+    
+    // Size insights
+    const largeTextCols = config.columns.filter(col => 
+      col.suggestedType === 'TEXT' || col.suggestedType.includes('1000') || col.suggestedType === 'NVARCHAR(MAX)'
+    )
+    
+    if (largeTextCols.length > 0) {
+      insights.push(`📝 ${largeTextCols.length} column(s) contain long text: ${largeTextCols.map(c => c.name).slice(0, 3).join(', ')}${largeTextCols.length > 3 ? '...' : ''}`)
+    }
+    
+    // Row count info
+    insights.push(`📦 Ready to import ${sheet.data.length.toLocaleString()} rows into ${config.tableName}`)
+    
+    setAnalysisInsights(insights)
+  }
 
   const updateTableConfig = (updates: Partial<TableCreationConfig>) => {
     const newConfigs = [...tableConfigs]
     newConfigs[currentSheetIndex] = { ...currentConfig, ...updates }
     setTableConfigs(newConfigs)
+    
+    // Regenerate insights if table name changes
+    if (updates.tableName) {
+      generateInsights(newConfigs[currentSheetIndex], currentSheet)
+    }
   }
 
   const updateColumn = (columnIndex: number, updates: Partial<ColumnAnalysis>) => {
@@ -66,7 +147,7 @@ export function TableCreationInterface({
   const addColumn = () => {
     const newColumn: ColumnAnalysis = {
       name: `new_column_${currentConfig.columns.length + 1}`,
-      suggestedType: 'VARCHAR(255)',
+      suggestedType: databaseConfig.type === 'sqlite' ? 'TEXT' : 'VARCHAR(255)',
       nullable: true,
       samples: [],
       uniqueValues: 0,
@@ -81,33 +162,45 @@ export function TableCreationInterface({
     updateTableConfig({ columns: newColumns })
   }
 
+  const autoOptimizeTypes = () => {
+    // Re-analyze with fresh detection
+    const optimizedConfig = DataTypeDetector.analyzeSheet(currentSheet.data, currentSheet.sheetName, currentSheet.headers)
+    
+    // Adapt for database type
+    optimizedConfig.columns = optimizedConfig.columns.map(col => ({
+      ...col,
+      suggestedType: DataTypeDetector.adaptTypeForDatabase(col.suggestedType, databaseConfig.type)
+    }))
+    
+    // Preserve custom column names if changed
+    optimizedConfig.columns = optimizedConfig.columns.map((col, idx) => ({
+      ...col,
+      name: currentConfig.columns[idx]?.name !== col.name ? currentConfig.columns[idx]?.name : col.name
+    }))
+    
+    updateTableConfig(optimizedConfig)
+    generateInsights(optimizedConfig, currentSheet)
+  }
+
   const createTables = async () => {
     setIsCreating(true)
     setCreationResults([])
     
-    console.log('=== TABLE CREATION INTERFACE DEBUG ===')
+    console.log('=== TABLE CREATION STARTED ===')
     console.log('Database config:', databaseConfig)
-    console.log('Number of tables to create:', tableConfigs.length)
-    console.log('Selected sheets:', selectedSheets.length)
+    console.log('Tables to create:', tableConfigs.length)
     
     const results: Array<{ success: boolean; message: string; tableName: string }> = []
+    let successCount = 0
 
     for (let i = 0; i < tableConfigs.length; i++) {
       const config = tableConfigs[i]
       const sheet = selectedSheets[i]
       
-      console.log(`\n--- Processing table ${i + 1}: ${config.tableName} ---`)
-      console.log('Table config:', config)
-      console.log('Sheet data rows:', sheet.data.length)
-      console.log('Sheet first few rows:', sheet.data.slice(0, 3))
+      console.log(`\n--- Creating table ${i + 1}: ${config.tableName} ---`)
       
       try {
         // Create table
-        console.log('Creating table with config:', {
-          config: databaseConfig,
-          tableConfig: config
-        })
-        
         const createResponse = await fetch('/api/database/create-table', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -121,14 +214,11 @@ export function TableCreationInterface({
         console.log('Table creation result:', createResult)
         
         if (!createResult.success) {
-          console.error('Table creation failed:', createResult)
-          
-          // Check if table already exists
           const errorMessage = createResult.message.toLowerCase()
-          if (errorMessage.includes('already exists') || errorMessage.includes('relation') && errorMessage.includes('exists')) {
+          if (errorMessage.includes('already exists') || (errorMessage.includes('relation') && errorMessage.includes('exists'))) {
             results.push({
               success: false,
-              message: `Table "${config.tableName}" already exists in the database. Please choose a different name or drop the existing table.`,
+              message: `Table "${config.tableName}" already exists. Please choose a different name or drop the existing table.`,
               tableName: config.tableName
             })
           } else {
@@ -141,48 +231,41 @@ export function TableCreationInterface({
           continue
         }
 
-        // Insert data with proper transformations
-        console.log('Transforming data before insertion...')
+        // Transform and insert data
         const transformedData = DataTransformer.transformDataRows(sheet.data, config.columns)
-        
-        console.log('Original data sample:', sheet.data.slice(0, 2))
-        console.log('Transformed data sample:', transformedData.slice(0, 2))
-        console.log('Column names for insertion:', config.columns.map(col => col.name))
-        
-        const insertPayload = {
-          config: databaseConfig,
-          tableName: config.tableName,
-          data: transformedData,
-          columnNames: config.columns.map(col => col.name)
-        }
-        
-        console.log('Insert payload:', insertPayload)
         
         const insertResponse = await fetch('/api/database/insert-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(insertPayload),
+          body: JSON.stringify({
+            config: databaseConfig,
+            tableName: config.tableName,
+            data: transformedData,
+            columnNames: config.columns.map(col => col.name)
+          }),
         })
         
         const insertResult = await insertResponse.json()
         console.log('Insert result:', insertResult)
         
+        const success = insertResult.success
         results.push({
-          success: insertResult.success,
-          message: insertResult.success 
-            ? `Table "${config.tableName}" created and ${insertResult.details?.insertedRows || 0} rows inserted`
-            : insertResult.message,
+          success,
+          message: success 
+            ? `✅ Table "${config.tableName}" created successfully with ${insertResult.details?.insertedRows || 0} rows`
+            : `❌ ${insertResult.message}`,
           tableName: config.tableName
         })
         
-        if (insertResult.success) {
-          console.log(`✅ Calling onTableCreated for: ${config.tableName}`)
+        if (success) {
+          successCount++
+          console.log(`✅ Notifying parent: table created - ${config.tableName}`)
+          // Call the callback for each successful table creation
           onTableCreated(config.tableName, sheet.data)
-        } else {
-          console.log(`❌ Insert failed for table: ${config.tableName}`, insertResult)
         }
         
       } catch (error) {
+        console.error(`Error creating table ${config.tableName}:`, error)
         results.push({
           success: false,
           message: error instanceof Error ? error.message : 'Unknown error occurred',
@@ -195,23 +278,23 @@ export function TableCreationInterface({
     setIsCreating(false)
     
     console.log('=== TABLE CREATION COMPLETE ===')
-    console.log('Total results:', results.length)
-    console.log('Successful tables:', results.filter(r => r.success).length)
-    console.log('Failed tables:', results.filter(r => !r.success).length)
-    console.log('Results summary:', results.map(r => ({ table: r.tableName, success: r.success })))
+    console.log(`Success: ${successCount}/${tableConfigs.length}`)
+    
+    // If all tables were created successfully, the parent will handle navigation
+    // The onTableCreated callbacks will trigger the parent to move to preview
   }
 
   const getDataTypeOptions = () => {
     const baseTypes = ['VARCHAR(50)', 'VARCHAR(255)', 'VARCHAR(1000)', 'TEXT', 'INT', 'BIGINT', 'DECIMAL(10,2)', 'BOOLEAN', 'DATE', 'DATETIME']
     
     if (databaseConfig.type === 'postgresql') {
-      return [...baseTypes, 'SERIAL', 'TIMESTAMP', 'JSONB']
+      return [...baseTypes, 'SERIAL', 'TIMESTAMP', 'JSONB', 'UUID', 'SMALLINT', 'REAL', 'DOUBLE PRECISION']
     } else if (databaseConfig.type === 'mysql') {
-      return [...baseTypes, 'AUTO_INCREMENT', 'TIMESTAMP', 'JSON']
+      return [...baseTypes, 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'FLOAT', 'DOUBLE', 'TIMESTAMP', 'JSON', 'ENUM']
     } else if (databaseConfig.type === 'mssql') {
-      return [...baseTypes, 'IDENTITY(1,1)', 'DATETIME2', 'NVARCHAR(MAX)']
+      return ['NVARCHAR(50)', 'NVARCHAR(255)', 'NVARCHAR(MAX)', 'INT', 'BIGINT', 'DECIMAL(10,2)', 'BIT', 'DATE', 'DATETIME2', 'SMALLINT', 'FLOAT', 'MONEY']
     } else if (databaseConfig.type === 'sqlite') {
-      return ['TEXT', 'INTEGER', 'REAL', 'BLOB']
+      return ['TEXT', 'INTEGER', 'REAL', 'BLOB', 'NUMERIC']
     }
     
     return baseTypes
@@ -220,9 +303,10 @@ export function TableCreationInterface({
   if (!currentSheet || !currentConfig) {
     return (
       <Card>
-        <CardContent className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-          <span className="ml-2">Analyzing sheet data...</span>
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-primary mb-3" />
+          <span className="text-lg font-medium">Analyzing sheet data...</span>
+          <span className="text-sm text-muted-foreground mt-1">Detecting data types and generating intelligent suggestions</span>
         </CardContent>
       </Card>
     )
@@ -232,108 +316,166 @@ export function TableCreationInterface({
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-xl font-semibold">
             <Database className="w-5 h-5 text-primary" />
-            Create Tables from Excel Sheets
+            Configure & Create Tables
           </CardTitle>
-          <CardDescription>
-            Configure table structure for {selectedSheets.length} selected sheet(s). 
-            Sheet {currentSheetIndex + 1} of {selectedSheets.length}: {currentSheet.fileName} - {currentSheet.sheetName}
+          <CardDescription className="text-sm text-muted-foreground">
+            Intelligent table configuration for {selectedSheets.length} sheet(s). 
+            Currently configuring: <strong className="font-medium">{currentSheet.fileName}</strong> → <strong className="font-medium">{currentSheet.sheetName}</strong>
+            {selectedSheets.length > 1 && ` (${currentSheetIndex + 1} of ${selectedSheets.length})`}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Intelligent Insights Panel */}
+          <Alert className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+            <Lightbulb className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <AlertDescription>
+              <div className="space-y-1.5">
+                {analysisInsights.map((insight, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="text-sm text-blue-700 dark:text-blue-300">{insight}</span>
+                  </div>
+                ))}
+              </div>
+            </AlertDescription>
+          </Alert>
+
           {/* Navigation between sheets */}
           {selectedSheets.length > 1 && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setCurrentSheetIndex(Math.max(0, currentSheetIndex - 1))}
                 disabled={currentSheetIndex === 0}
+                className="text-sm font-medium"
               >
-                Previous
+                ← Previous Sheet
               </Button>
-              <span className="text-sm text-muted-foreground">
-                {currentSheetIndex + 1} / {selectedSheets.length}
-              </span>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-sm font-medium px-3 py-1">
+                  Sheet {currentSheetIndex + 1} / {selectedSheets.length}
+                </Badge>
+                <span className="text-sm font-normal text-muted-foreground">
+                  ({selectedSheets.filter((_, idx) => idx < currentSheetIndex).length} configured)
+                </span>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setCurrentSheetIndex(Math.min(selectedSheets.length - 1, currentSheetIndex + 1))}
                 disabled={currentSheetIndex === selectedSheets.length - 1}
+                className="text-sm font-medium"
               >
-                Next
+                Next Sheet →
               </Button>
             </div>
           )}
 
-          {/* Table Name */}
-          <div className="space-y-2">
-            <Label htmlFor="tableName">Table Name</Label>
-            <Input
-              id="tableName"
-              value={currentConfig.tableName}
-              onChange={(e) => updateTableConfig({ tableName: e.target.value })}
-              placeholder="Enter table name"
-            />
-          </div>
+          {/* Table Configuration */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Table Name */}
+            <div className="space-y-2">
+              <Label htmlFor="tableName" className="flex items-center gap-2 text-sm font-medium">
+                Table Name
+                <Badge variant="outline" className="text-xs font-normal">
+                  {databaseConfig.type.toUpperCase()}
+                </Badge>
+              </Label>
+              <Input
+                id="tableName"
+                value={currentConfig.tableName}
+                onChange={(e) => updateTableConfig({ tableName: e.target.value })}
+                placeholder="Enter table name"
+                className="font-mono text-sm"
+              />
+            </div>
 
-          {/* Primary Key Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="primaryKey">Primary Key</Label>
-            <Select
-              value={currentConfig.primaryKey || ''}
-              onValueChange={(value) => updateTableConfig({ primaryKey: value })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select primary key column" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="id">Auto-generated ID</SelectItem>
-                {currentConfig.columns.map((col) => (
-                  <SelectItem key={col.name} value={col.name}>
-                    {col.name}
+            {/* Primary Key Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="primaryKey" className="text-sm font-medium">Primary Key</Label>
+              <Select
+                value={currentConfig.primaryKey || ''}
+                onValueChange={(value) => updateTableConfig({ primaryKey: value })}
+              >
+                <SelectTrigger className="text-sm">
+                  <SelectValue placeholder="Select primary key column" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="id" className="text-sm">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-xs font-normal">Auto</Badge>
+                      <span className="font-mono">Auto-generated ID</span>
+                    </div>
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  {currentConfig.columns.map((col) => (
+                    <SelectItem key={col.name} value={col.name} className="text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono">{col.name}</span>
+                        {col.uniqueValues === col.totalCount - col.nullCount && col.nullCount === 0 && (
+                          <Badge variant="secondary" className="text-xs font-normal">Unique</Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
-          {/* Column Configuration */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label>Column Configuration</Label>
+          {/* Quick Actions */}
+          <div className="flex items-center justify-between pt-2 pb-2 border-y">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={autoOptimizeTypes}
+                className="flex items-center gap-2 text-sm"
+              >
+                <Lightbulb className="w-4 h-4" />
+                <span>Auto-Optimize Types</span>
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={addColumn}
-                className="flex items-center gap-1"
+                className="flex items-center gap-2 text-sm"
               >
                 <Plus className="w-4 h-4" />
-                Add Column
+                <span>Add Column</span>
               </Button>
             </div>
+            <div className="text-sm font-medium text-muted-foreground">
+              {currentConfig.columns.length} columns configured
+            </div>
+          </div>
 
-            <ScrollArea className="h-96 border rounded-lg">
+          {/* Column Configuration Table */}
+          <div className="space-y-3">
+            <Label className="text-base font-semibold">Column Configuration</Label>
+            
+            <ScrollArea className="h-[450px] border rounded-lg">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 bg-background z-10">
                   <TableRow>
-                    <TableHead>Column Name</TableHead>
-                    <TableHead>Data Type</TableHead>
-                    <TableHead>Nullable</TableHead>
-                    <TableHead>Sample Values</TableHead>
-                    <TableHead>Stats</TableHead>
-                    <TableHead>Actions</TableHead>
+                    <TableHead className="w-[200px] text-sm font-medium">Column Name</TableHead>
+                    <TableHead className="w-[180px] text-sm font-medium">Data Type</TableHead>
+                    <TableHead className="w-[80px] text-center text-sm font-medium">Nullable</TableHead>
+                    <TableHead className="w-[250px] text-sm font-medium">Sample Values</TableHead>
+                    <TableHead className="w-[140px] text-sm font-medium">Statistics</TableHead>
+                    <TableHead className="w-[80px] text-center text-sm font-medium">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {currentConfig.columns.map((column, index) => (
-                    <TableRow key={index}>
+                    <TableRow key={index} className="hover:bg-muted/50">
                       <TableCell>
                         <Input
                           value={column.name}
                           onChange={(e) => updateColumn(index, { name: e.target.value })}
-                          className="w-32"
+                          className="w-full font-mono text-sm"
+                          placeholder="column_name"
                         />
                       </TableCell>
                       <TableCell>
@@ -341,46 +483,77 @@ export function TableCreationInterface({
                           value={column.suggestedType}
                           onValueChange={(value) => updateColumn(index, { suggestedType: value })}
                         >
-                          <SelectTrigger className="w-40">
-                            <SelectValue />
+                          <SelectTrigger className="w-full text-sm">
+                            <SelectValue className="font-mono text-sm">
+                              <span className="font-mono text-sm">{column.suggestedType}</span>
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             {getDataTypeOptions().map((type) => (
-                              <SelectItem key={type} value={type}>
-                                {type}
+                              <SelectItem key={type} value={type} className="text-sm">
+                                <span className="font-mono text-sm">{type}</span>
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={column.nullable}
-                          onCheckedChange={(checked) => updateColumn(index, { nullable: checked })}
-                        />
+                      <TableCell className="text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <Switch
+                            checked={column.nullable}
+                            onCheckedChange={(checked) => updateColumn(index, { nullable: checked })}
+                          />
+                          {column.nullCount > 0 && (
+                            <Badge variant="outline" className="text-xs font-normal">
+                              {column.nullCount} nulls
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
-                        <div className="space-y-1">
+                        <div className="flex flex-wrap gap-1">
                           {column.samples.slice(0, 3).map((sample, i) => (
-                            <Badge key={i} variant="secondary" className="text-xs">
-                              {String(sample).substring(0, 20)}
+                            <Badge key={i} variant="secondary" className="text-xs font-normal max-w-[80px] truncate">
+                              {String(sample).substring(0, 15)}
                             </Badge>
                           ))}
+                          {column.samples.length > 3 && (
+                            <Badge variant="outline" className="text-xs font-normal">
+                              +{column.samples.length - 3}
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="text-xs text-muted-foreground">
-                          <div>Unique: {column.uniqueValues}</div>
-                          <div>Nulls: {column.nullCount}</div>
-                          <div>Total: {column.totalCount}</div>
+                        <div className="text-xs space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground font-normal">Unique:</span>
+                            <Badge variant="outline" className="text-xs font-normal">
+                              {column.uniqueValues}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground font-normal">Total:</span>
+                            <Badge variant="outline" className="text-xs font-normal">
+                              {column.totalCount}
+                            </Badge>
+                          </div>
+                          {column.maxLength && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground font-normal">Max Len:</span>
+                              <Badge variant="outline" className="text-xs font-normal">
+                                {column.maxLength}
+                              </Badge>
+                            </div>
+                          )}
                         </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-center">
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => removeColumn(index)}
-                          className="text-destructive hover:text-destructive"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -395,39 +568,63 @@ export function TableCreationInterface({
           {/* Creation Results */}
           {creationResults.length > 0 && (
             <div className="space-y-2">
-              <Label>Creation Results</Label>
-              {creationResults.map((result, index) => (
-                <Alert key={index} variant={result.success ? "default" : "destructive"}>
-                  {result.success ? (
-                    <CheckCircle className="h-4 w-4" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4" />
-                  )}
-                  <AlertDescription>
-                    <strong>{result.tableName}:</strong> {result.message}
-                  </AlertDescription>
-                </Alert>
-              ))}
+              <Label className="text-base font-semibold">Creation Results</Label>
+              <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                {creationResults.map((result, index) => (
+                  <Alert 
+                    key={index} 
+                    variant={result.success ? "default" : "destructive"}
+                    className={result.success ? "border-green-200 bg-green-50 dark:bg-green-950 dark:border-green-800" : ""}
+                  >
+                    {result.success ? (
+                      <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4" />
+                    )}
+                    <AlertDescription className="text-sm">
+                      {result.message}
+                    </AlertDescription>
+                  </Alert>
+                ))}
+              </div>
             </div>
           )}
 
           {/* Actions */}
-          <div className="flex justify-between pt-4">
-            <Button variant="outline" onClick={onCancel}>
+          <div className="flex items-center justify-between pt-6 border-t">
+            <Button variant="outline" onClick={onCancel} disabled={isCreating} className="text-sm">
               Cancel
             </Button>
-            <Button
-              onClick={createTables}
-              disabled={isCreating || !currentConfig.tableName}
-              className="flex items-center gap-2"
-            >
-              {isCreating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Save className="w-4 h-4" />
+            <div className="flex items-center gap-3">
+              {creationResults.length > 0 && creationResults.every(r => r.success) && (
+                <Badge variant="default" className="bg-green-600 text-white px-4 py-2 text-sm font-medium">
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  All tables created successfully! Navigating to preview...
+                </Badge>
               )}
-              {isCreating ? 'Creating...' : `Create ${selectedSheets.length} Table(s)`}
-            </Button>
+              {/* Only show button if not all tables are created yet */}
+              {!(creationResults.length > 0 && creationResults.every(r => r.success)) && (
+                <Button
+                  onClick={createTables}
+                  disabled={isCreating || !currentConfig.tableName || currentConfig.columns.length === 0 || (creationResults.length > 0 && creationResults.some(r => r.success))}
+                  size="lg"
+                  className="flex items-center gap-2 min-w-[200px] text-sm font-medium"
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Creating Tables...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-5 h-5" />
+                      <span>Create {selectedSheets.length} Table{selectedSheets.length > 1 ? 's' : ''}</span>
+                      <ArrowRight className="w-4 h-4 ml-1" />
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -35,7 +35,7 @@ export function TablePreviewInterface({
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const currentTable = createdTables[selectedTableIndex]
+  const currentTable = createdTables?.[selectedTableIndex]
 
   // Fetch table data when table selection changes
   useEffect(() => {
@@ -62,7 +62,13 @@ export function TablePreviewInterface({
       const result = await response.json()
       
       if (result.success) {
-        setTableData(result.data)
+        // Transform API response to match component's expected structure
+        setTableData({
+          tableName: tableName,
+          totalRows: result.totalRows || result.data?.length || 0,
+          columns: result.columns || [],
+          sampleData: result.data || []
+        })
       } else {
         setError(result.message || 'Failed to fetch table data')
       }
@@ -85,15 +91,28 @@ export function TablePreviewInterface({
     }
   }
 
+  // Handle empty state
+  if (!createdTables || createdTables.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mb-3" />
+          <span className="text-lg font-medium">Loading table previews...</span>
+          <span className="text-sm font-normal text-muted-foreground mt-1">Preparing your newly created tables</span>
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-xl font-semibold">
             <CheckCircle className="w-5 h-5 text-green-600" />
             Tables Created Successfully
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="text-sm text-muted-foreground">
             Review your newly created tables and their data. All {createdTables.length} tables have been successfully created and populated.
           </CardDescription>
         </CardHeader>
@@ -103,15 +122,17 @@ export function TablePreviewInterface({
               <Card 
                 key={table.tableName}
                 className={`cursor-pointer transition-all ${
-                  index === selectedTableIndex ? 'ring-2 ring-blue-500 bg-blue-50' : 'hover:bg-gray-50'
+                  index === selectedTableIndex 
+                    ? 'ring-2 ring-primary bg-blue-50 dark:bg-blue-950' 
+                    : 'hover:bg-muted/50'
                 }`}
                 onClick={() => setSelectedTableIndex(index)}
               >
                 <CardContent className="pt-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="font-semibold text-sm">{table.tableName}</h3>
-                      <p className="text-xs text-muted-foreground">{table.rowCount} rows</p>
+                      <h3 className="font-mono text-sm font-semibold">{table.tableName}</h3>
+                      <p className="text-xs font-normal text-muted-foreground">{table.rowCount ?? 0} rows</p>
                     </div>
                     <Database className="w-4 h-4 text-muted-foreground" />
                   </div>
@@ -128,21 +149,23 @@ export function TablePreviewInterface({
                 size="sm"
                 onClick={prevTable}
                 disabled={selectedTableIndex === 0}
+                className="text-sm font-medium"
               >
                 <ArrowLeft className="w-4 h-4 mr-1" />
-                Previous
+                <span>Previous</span>
               </Button>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={nextTable}
                 disabled={selectedTableIndex === createdTables.length - 1}
+                className="text-sm font-medium"
               >
-                Next
+                <span>Next</span>
                 <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
-            <Badge variant="outline">
+            <Badge variant="outline" className="text-sm font-medium">
               Table {selectedTableIndex + 1} of {createdTables.length}
             </Badge>
           </div>
@@ -151,19 +174,19 @@ export function TablePreviewInterface({
           {currentTable && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                   <Eye className="w-4 h-4" />
-                  Preview: {currentTable.tableName}
+                  <span className="text-lg font-semibold">Preview: <span className="font-mono">{currentTable.tableName}</span></span>
                 </CardTitle>
-                <CardDescription>
-                  Showing first 10 rows of {currentTable.rowCount} total rows
+                <CardDescription className="text-sm font-normal text-muted-foreground">
+                  Showing first 10 rows of {currentTable.rowCount?.toLocaleString() || '0'} total rows
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading && (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="w-6 h-6 animate-spin" />
-                    <span className="ml-2">Loading table data...</span>
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">Loading table data...</span>
                   </div>
                 )}
 
@@ -173,14 +196,14 @@ export function TablePreviewInterface({
                   </Alert>
                 )}
 
-                {tableData && !isLoading && !error && (
+                {tableData && !isLoading && !error && tableData.columns && tableData.sampleData && (
                   <ScrollArea className="h-96 w-full">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           {tableData.columns.map((column) => (
-                            <TableHead key={column} className="whitespace-nowrap">
-                              {column}
+                            <TableHead key={column} className="whitespace-nowrap text-sm font-medium">
+                              <span className="font-mono">{column}</span>
                             </TableHead>
                           ))}
                         </TableRow>
@@ -188,9 +211,9 @@ export function TablePreviewInterface({
                       <TableBody>
                         {tableData.sampleData.map((row, index) => (
                           <TableRow key={index}>
-                            {row.map((cell, cellIndex) => (
-                              <TableCell key={cellIndex} className="whitespace-nowrap">
-                                <Badge variant="secondary" className="max-w-32 truncate">
+                            {Array.isArray(row) && row.map((cell, cellIndex) => (
+                              <TableCell key={cellIndex} className="whitespace-nowrap text-sm">
+                                <Badge variant="secondary" className="max-w-32 truncate text-xs font-normal">
                                   {String(cell ?? '')}
                                 </Badge>
                               </TableCell>
@@ -201,17 +224,27 @@ export function TablePreviewInterface({
                     </Table>
                   </ScrollArea>
                 )}
+
+                {/* Show message if data structure is invalid */}
+                {tableData && !isLoading && !error && (!tableData.columns || !tableData.sampleData) && (
+                  <Alert>
+                    <AlertDescription>
+                      No preview data available. The table might be empty or the data structure is invalid.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </CardContent>
             </Card>
           )}
 
           {/* Action Buttons */}
           <div className="flex justify-between mt-6">
-            <Button variant="outline" onClick={onBack}>
-              Back to Creation
+            <Button variant="outline" onClick={onBack} className="text-sm font-medium">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              <span>Back to Creation</span>
             </Button>
-            <Button onClick={onContinue}>
-              Continue to Next Step
+            <Button onClick={onContinue} className="text-sm font-medium">
+              <span>Continue to Next Step</span>
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>
