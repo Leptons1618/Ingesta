@@ -160,7 +160,6 @@ export default function HomePage() {
 
   const handleTableCreated = useCallback((tableName: string, sheetData: any[][]) => {
     console.log(`Table created callback: ${tableName}`)
-    console.log('Current sheetsForTableCreation:', sheetsForTableCreation.map(s => s.sheetName))
     
     // Find the sheet that was created
     const createdSheet = sheetsForTableCreation.find(sheet => {
@@ -178,30 +177,22 @@ export default function HomePage() {
         rowCount: sheetData.length
       }
       
-      setCreatedTables(prev => [...prev, newCreatedTable])
-      console.log('Added to created tables:', newCreatedTable)
+      setCreatedTables(prev => {
+        const updated = [...prev, newCreatedTable]
+        console.log(`Added to created tables: ${tableName} (${updated.length}/${sheetsForTableCreation.length} total)`)
+        
+        // Check if ALL tables have been created
+        if (updated.length === sheetsForTableCreation.length) {
+          console.log('✅ All tables created! Moving to step 6 (Preview Tables)')
+          // Clear sheetsForTableCreation and move to preview
+          setSheetsForTableCreation([])
+          setCurrentStep(6)
+        }
+        
+        return updated
+      })
     }
-    
-    // Find and remove the specific sheet that was created
-    // The tableName is the sanitized version, so we need to match it against the sanitized sheetName
-    const remainingCreation = sheetsForTableCreation.filter(sheet => {
-      const sanitizedSheetName = DataTypeDetector.sanitizeTableName(sheet.sheetName)
-      
-      console.log(`Comparing: "${sanitizedSheetName}" vs "${tableName}"`)
-      return sanitizedSheetName !== tableName
-    })
-    
-    console.log('Remaining sheets for creation:', remainingCreation.map(s => s.sheetName))
-    
-    setSheetsForTableCreation(remainingCreation)
-    
-    // If no more tables to create, move to table preview step
-    if (remainingCreation.length === 0) {
-      console.log('All tables created, moving to step 6 (Preview Tables)')
-      setCurrentStep(6)
-    }
-    // else: continue with remaining table creation (stays on step 5)
-  }, [sheetsForTableCreation, sheetsForMapping])
+  }, [sheetsForTableCreation])
 
   const handleMappingComplete = useCallback((mappings: SheetMapping[]) => {
     setSheetMappings(mappings)
@@ -456,12 +447,12 @@ export default function HomePage() {
         )}
 
         {/* Step 6: Table Preview */}
-        {currentStep === 6 && selectedConnection && (
+        {currentStep === 6 && selectedConnection && createdTables.length > 0 && (
           <TablePreviewInterface
             databaseConfig={selectedConnection}
             createdTables={createdTables.map(table => ({
-              tableName: table.tableName,
-              rowCount: table.rowCount
+              tableName: table.tableName ?? 'Unknown Table',
+              rowCount: table.rowCount ?? 0
             }))}
             onContinue={() => setCurrentStep(7)}
             onBack={() => setCurrentStep(5)}
@@ -473,7 +464,7 @@ export default function HomePage() {
           <Card>
             <CardContent className="flex items-center justify-center py-12">
               <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-              <span className="ml-2">Loading table previews...</span>
+              <span className="ml-2 text-sm font-normal">Loading table previews...</span>
             </CardContent>
           </Card>
         )}
