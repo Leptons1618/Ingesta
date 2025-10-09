@@ -20,15 +20,17 @@ interface CreatedTable {
 interface TablePreviewInterfaceProps {
   databaseConfig: DatabaseConfig
   createdTables: Array<{ tableName: string; rowCount: number }>
-  onContinue: () => void
   onBack: () => void
+  onContinue?: () => void
+  showContinue?: boolean
 }
 
 export function TablePreviewInterface({ 
   databaseConfig, 
   createdTables, 
-  onContinue, 
-  onBack 
+  onBack,
+  onContinue,
+  showContinue = false
 }: TablePreviewInterfaceProps) {
   const [selectedTableIndex, setSelectedTableIndex] = useState(0)
   const [tableData, setTableData] = useState<CreatedTable | null>(null)
@@ -243,10 +245,12 @@ export function TablePreviewInterface({
               <ArrowLeft className="w-4 h-4 mr-2" />
               <span>Back to Creation</span>
             </Button>
-            <Button onClick={onContinue} className="text-sm font-medium">
-              <span>Continue to Next Step</span>
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
+            {showContinue && onContinue && (
+              <Button onClick={onContinue} className="text-sm font-medium">
+                <span>Continue to Next Step</span>
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
