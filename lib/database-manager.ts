@@ -38,6 +38,10 @@ export interface DatabaseColumn {
   defaultValue?: string
 }
 
+export type DatabaseServerOptions = Pick<DatabaseConfig, "type" | "host" | "port" | "username" | "password" | "ssl"> & {
+  database?: string
+}
+
 export class DatabaseManager {
   private static connections: Map<string, DatabaseConfig> = new Map()
 
@@ -90,6 +94,48 @@ export class DatabaseManager {
         success: false,
         message: error instanceof Error ? error.message : "Connection failed",
       }
+    }
+  }
+
+  static async listDatabases(options: DatabaseServerOptions): Promise<string[]> {
+    if (typeof window !== 'undefined') {
+      throw new Error('Database operations can only be performed on the server side')
+    }
+
+    switch (options.type) {
+      case "postgresql":
+        return await this.listPostgresDatabases(options)
+      case "mysql":
+        return await this.listMySQLDatabases(options)
+      case "sqlite":
+        return []
+      case "mssql":
+        return await this.listMSSQLDatabases(options)
+      default:
+        throw new Error(`Unsupported database type: ${options.type}`)
+    }
+  }
+
+  static async createDatabase(options: DatabaseServerOptions, databaseName: string): Promise<void> {
+    if (typeof window !== 'undefined') {
+      throw new Error('Database operations can only be performed on the server side')
+    }
+
+    if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
+      throw new Error('Database name may only contain letters, numbers, and underscores')
+    }
+
+    switch (options.type) {
+      case "postgresql":
+        return await this.createPostgresDatabase(options, databaseName)
+      case "mysql":
+        return await this.createMySQLDatabase(options, databaseName)
+      case "sqlite":
+        throw new Error('SQLite manages databases as files; create a new file path instead.')
+      case "mssql":
+        return await this.createMSSQLDatabase(options, databaseName)
+      default:
+        throw new Error(`Unsupported database type: ${options.type}`)
     }
   }
 
@@ -146,6 +192,142 @@ export class DatabaseManager {
         return `mssql://${config.username}:${config.password}@${config.host}:${config.port || 1433}/${config.database}${config.ssl ? "?encrypt=true" : ""}`
       default:
         return ""
+    }
+  }
+
+  private static resolveAdminDatabase(options: DatabaseServerOptions): string | undefined {
+    if (options.database && options.database.trim().length > 0) {
+      return options.database
+    }
+
+    switch (options.type) {
+      case "postgresql":
+        return "postgres"
+      case "mysql":
+        return undefined // MySQL connections can omit database
+      case "mssql":
+        return "master"
+      default:
+        return undefined
+    }
+  }
+
+  private static async listPostgresDatabases(options: DatabaseServerOptions): Promise<string[]> {
+    const { Client } = await import("pg")
+    const client = new Client({
+      host: options.host,
+      port: options.port || 5432,
+      database: this.resolveAdminDatabase(options) || "postgres",
+      user: options.username,
+      password: options.password,
+      ssl: options.ssl ? { rejectUnauthorized: false } : undefined,
+    })
+
+    await client.connect()
+    try {
+      const res = await client.query(
+        "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
+      )
+      return res.rows.map((row: any) => row.datname as string)
+    } finally {
+      await client.end().catch(() => {})
+    }
+  }
+
+  private static async listMySQLDatabases(options: DatabaseServerOptions): Promise<string[]> {
+    const mysql = await import("mysql2/promise")
+    const conn = await mysql.createConnection({
+      host: options.host,
+      port: options.port || 3306,
+      user: options.username,
+      password: options.password,
+      ssl: options.ssl ? { rejectUnauthorized: false } : undefined as any,
+    })
+
+    try {
+      const [rowsRaw] = await conn.query("SHOW DATABASES")
+      const rows = rowsRaw as Array<Record<string, string>>
+      const key = rows.length ? Object.keys(rows[0])[0] : "Database"
+      return rows.map((row) => row[key])
+    } finally {
+      await conn.end().catch(() => {})
+    }
+  }
+
+  private static async listMSSQLDatabases(options: DatabaseServerOptions): Promise<string[]> {
+    const mssql = await import("mssql")
+    const pool = new mssql.ConnectionPool({
+      server: options.host!,
+      port: options.port || 1433,
+      database: this.resolveAdminDatabase(options) || "master",
+      user: options.username,
+      password: options.password,
+      options: { encrypt: !!options.ssl, trustServerCertificate: true },
+    })
+
+    await pool.connect()
+    try {
+      const res = await pool
+        .request()
+        .query("SELECT name FROM sys.databases WHERE name NOT IN ('master','tempdb','model','msdb') ORDER BY name")
+      return (res.recordset as Array<{ name: string }>).map((row) => row.name)
+    } finally {
+      await pool.close().catch(() => {})
+    }
+  }
+
+  private static async createPostgresDatabase(options: DatabaseServerOptions, databaseName: string): Promise<void> {
+    const { Client } = await import("pg")
+    const client = new Client({
+      host: options.host,
+      port: options.port || 5432,
+      database: this.resolveAdminDatabase(options) || "postgres",
+      user: options.username,
+      password: options.password,
+      ssl: options.ssl ? { rejectUnauthorized: false } : undefined,
+    })
+
+    await client.connect()
+    try {
+      await client.query(`CREATE DATABASE "${databaseName}"`)
+    } finally {
+      await client.end().catch(() => {})
+    }
+  }
+
+  private static async createMySQLDatabase(options: DatabaseServerOptions, databaseName: string): Promise<void> {
+    const mysql = await import("mysql2/promise")
+    const conn = await mysql.createConnection({
+      host: options.host,
+      port: options.port || 3306,
+      user: options.username,
+      password: options.password,
+      ssl: options.ssl ? { rejectUnauthorized: false } : undefined as any,
+    })
+
+    try {
+      await conn.query(`CREATE DATABASE \`${databaseName}\``)
+    } finally {
+      await conn.end().catch(() => {})
+    }
+  }
+
+  private static async createMSSQLDatabase(options: DatabaseServerOptions, databaseName: string): Promise<void> {
+    const mssql = await import("mssql")
+    const pool = new mssql.ConnectionPool({
+      server: options.host!,
+      port: options.port || 1433,
+      database: this.resolveAdminDatabase(options) || "master",
+      user: options.username,
+      password: options.password,
+      options: { encrypt: !!options.ssl, trustServerCertificate: true },
+    })
+
+    await pool.connect()
+    try {
+      await pool.request().query(`CREATE DATABASE [${databaseName}]`)
+    } finally {
+      await pool.close().catch(() => {})
     }
   }
 

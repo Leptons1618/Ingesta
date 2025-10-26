@@ -1,6 +1,6 @@
 # 🚀 Ingesta Complete API Endpoints
 
-## ✅ **33 Total Endpoints Created**
+## ✅ **35 Total Endpoints Created**
 
 Your Ingesta application now has comprehensive API coverage with both traditional `/api/` routes and user-friendly direct endpoints.
 
@@ -28,7 +28,7 @@ These are simple, easy-to-use endpoints without the `/api/` prefix:
 
 ---
 
-## 🗂️ **API Routes (22 endpoints)**
+## 🗂️ **API Routes (24 endpoints)**
 
 Traditional REST API with `/api/` prefix organized by functionality:
 
@@ -43,6 +43,8 @@ Traditional REST API with `/api/` prefix organized by functionality:
 - `POST /api/database/preview-table`
 - `POST /api/database/create-table`
 - `POST /api/database/insert-data`
+- `POST /api/database/list-databases`
+- `POST /api/database/create-database`
 
 ### **Sheet Operations** (`/api/sheets/`)
 - `POST /api/sheets/analyze`

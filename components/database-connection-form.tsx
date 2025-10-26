@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Database, CheckCircle, AlertCircle, Eye, EyeOff } from "lucide-react"
-import { type DatabaseConfig, type ConnectionTestResult } from "@/lib/database-manager"
+import { type DatabaseConfig, type ConnectionTestResult, type DatabaseServerOptions } from "@/lib/database-manager"
 import { ConnectionStorage } from "@/lib/connection-storage"
 
 interface DatabaseConnectionFormProps {
@@ -26,6 +26,11 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [databaseOptions, setDatabaseOptions] = useState<string[]>([])
+  const [isLoadingDatabases, setIsLoadingDatabases] = useState(false)
+  const [isCreatingDatabase, setIsCreatingDatabase] = useState(false)
+  const [newDatabaseName, setNewDatabaseName] = useState("")
+  const [databaseMessage, setDatabaseMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   const handleTypeChange = (type: DatabaseConfig["type"]) => {
     const defaultPorts = {
@@ -35,11 +40,18 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
       mssql: 1433,
     }
 
+    setDatabaseOptions([])
+    setDatabaseMessage(null)
+    setNewDatabaseName("")
+
     setConfig((prev) => ({
       ...prev,
       type,
       port: defaultPorts[type],
+      database: "",
+      ssl: type === "sqlite" ? false : prev.ssl,
     }))
+    setTestResult(null)
   }
 
   const handleTestConnection = async () => {
@@ -51,8 +63,17 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
       return
     }
 
+    if (config.type !== "sqlite" && (!config.host || !config.username)) {
+      setTestResult({
+        success: false,
+        message: "Please provide host and username",
+      })
+      return
+    }
+
     setIsTestingConnection(true)
     setTestResult(null)
+    setDatabaseMessage(null)
 
     try {
       const response = await fetch('/api/database/test-connection', {
@@ -102,6 +123,9 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
         ssl: false,
       })
       setTestResult(null)
+      setDatabaseOptions([])
+      setDatabaseMessage(null)
+      setNewDatabaseName("")
     } catch (error) {
       setTestResult({
         success: false,
@@ -109,6 +133,136 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
       })
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const buildServerOptions = (): DatabaseServerOptions | null => {
+    if (!config.type) {
+      return null
+    }
+
+    if (config.type !== "sqlite" && (!config.host || !config.username)) {
+      setDatabaseMessage({ type: "error", text: "Host and username are required for server connections" })
+      return null
+    }
+
+    return {
+      type: config.type,
+      host: config.host,
+      port: config.port,
+      username: config.username,
+      password: config.password,
+      ssl: config.ssl,
+      database: config.database?.trim() ? config.database.trim() : undefined,
+    }
+  }
+
+  const handleLoadDatabases = async () => {
+    if (config.type === "sqlite") {
+      setDatabaseMessage({ type: "error", text: "SQLite uses file paths; specify a file name above." })
+      return
+    }
+
+    const serverOptions = buildServerOptions()
+    if (!serverOptions) {
+      return
+    }
+
+    setIsLoadingDatabases(true)
+    setDatabaseMessage(null)
+
+    try {
+      const response = await fetch("/api/database/list-databases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: serverOptions }),
+      })
+
+      const result = await response.json()
+
+      if (!result.success) {
+        throw new Error(result.message || "Failed to load databases")
+      }
+
+      const databases: string[] = (result.databases || []).map((db: string) => db)
+      const sortedDatabases = [...databases].sort((a, b) => a.localeCompare(b))
+      setDatabaseOptions(sortedDatabases)
+      setDatabaseMessage({
+        type: "success",
+        text: sortedDatabases.length
+          ? `Found ${sortedDatabases.length} database${sortedDatabases.length === 1 ? "" : "s"}.`
+          : "No databases found with the provided credentials.",
+      })
+
+      if (sortedDatabases.length > 0) {
+        setConfig((prev) => ({
+          ...prev,
+          database: prev.database && prev.database.length > 0 ? prev.database : sortedDatabases[0],
+        }))
+      }
+
+      setTestResult(null)
+    } catch (error) {
+      setDatabaseOptions([])
+      setDatabaseMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Failed to load databases",
+      })
+    } finally {
+      setIsLoadingDatabases(false)
+    }
+  }
+
+  const handleCreateDatabase = async () => {
+    if (config.type === "sqlite") {
+      setDatabaseMessage({ type: "error", text: "SQLite databases are created as files; provide a file name above." })
+      return
+    }
+
+    const trimmedName = newDatabaseName.trim()
+    if (!trimmedName) {
+      setDatabaseMessage({ type: "error", text: "Please enter a database name" })
+      return
+    }
+
+    if (!/^[A-Za-z0-9_]+$/.test(trimmedName)) {
+      setDatabaseMessage({ type: "error", text: "Database names may only include letters, numbers, and underscores" })
+      return
+    }
+
+    const serverOptions = buildServerOptions()
+    if (!serverOptions) {
+      return
+    }
+
+    setIsCreatingDatabase(true)
+    setDatabaseMessage(null)
+
+    try {
+      const response = await fetch("/api/database/create-database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: serverOptions, databaseName: trimmedName }),
+      })
+
+      const result = await response.json()
+
+      if (!result.success) {
+        throw new Error(result.message || "Failed to create database")
+      }
+
+      setDatabaseMessage({ type: "success", text: `Database "${trimmedName}" created successfully.` })
+      setDatabaseOptions((prev) => Array.from(new Set([...prev, trimmedName])).sort())
+      setConfig((prev) => ({ ...prev, database: trimmedName }))
+      setNewDatabaseName("")
+      setTestResult(null)
+    } catch (error) {
+      setDatabaseMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Failed to create database",
+      })
+    } finally {
+      setIsCreatingDatabase(false)
     }
   }
 
@@ -159,7 +313,11 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                   id="host"
                   placeholder="localhost"
                   value={config.host || ""}
-                  onChange={(e) => setConfig((prev) => ({ ...prev, host: e.target.value }))}
+                  onChange={(e) => {
+                    setConfig((prev) => ({ ...prev, host: e.target.value }))
+                    setTestResult(null)
+                    setDatabaseMessage(null)
+                  }}
                 />
               </div>
 
@@ -169,22 +327,129 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                   id="port"
                   type="number"
                   value={config.port || ""}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setConfig((prev) => ({ ...prev, port: Number.parseInt(e.target.value) || undefined }))
-                  }
+                    setTestResult(null)
+                    setDatabaseMessage(null)
+                  }}
                 />
               </div>
             </>
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="database">Database Name</Label>
-            <Input
-              id="database"
-              placeholder={config.type === "sqlite" ? "database.db" : "my_database"}
-              value={config.database || ""}
-              onChange={(e) => setConfig((prev) => ({ ...prev, database: e.target.value }))}
-            />
+            <Label htmlFor="database">Database</Label>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col md:flex-row md:items-center md:gap-2">
+                <Input
+                  id="database"
+                  placeholder={config.type === "sqlite" ? "database.db" : "my_database"}
+                  value={config.database || ""}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setConfig((prev) => ({ ...prev, database: value }))
+                    setTestResult(null)
+                    setDatabaseMessage(null)
+                  }}
+                />
+                {config.type !== "sqlite" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleLoadDatabases}
+                    disabled={isLoadingDatabases}
+                    className="mt-2 md:mt-0 md:w-auto"
+                  >
+                    {isLoadingDatabases ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      "Browse"
+                    )}
+                  </Button>
+                )}
+              </div>
+
+              {config.type !== "sqlite" && databaseOptions.length > 0 && (
+                <Select
+                  value={
+                    config.database && databaseOptions.includes(config.database)
+                      ? config.database
+                      : undefined
+                  }
+                  onValueChange={(value) => {
+                    setConfig((prev) => ({ ...prev, database: value }))
+                    setTestResult(null)
+                    setDatabaseMessage(null)
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an existing database" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {databaseOptions.map((db) => (
+                      <SelectItem key={db} value={db}>
+                        {db}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {config.type !== "sqlite" && (
+                <div className="space-y-2 rounded-md border border-dashed p-3">
+                  <Label htmlFor="new-database" className="text-sm">
+                    Create New Database
+                  </Label>
+                  <div className="flex flex-col md:flex-row md:items-center md:gap-2">
+                    <Input
+                      id="new-database"
+                      placeholder="new_database"
+                      value={newDatabaseName}
+                      onChange={(e) => setNewDatabaseName(e.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      onClick={handleCreateDatabase}
+                      disabled={isCreatingDatabase}
+                      className="mt-2 md:mt-0 md:w-auto"
+                    >
+                      {isCreatingDatabase ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        "Create"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {config.type !== "sqlite" && databaseMessage && (
+                <Alert
+                  className={
+                    databaseMessage.type === "success"
+                      ? "border-green-200 bg-green-50"
+                      : "border-red-200 bg-red-50"
+                  }
+                >
+                  {databaseMessage.type === "success" ? (
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-red-600" />
+                  )}
+                  <AlertDescription
+                    className={databaseMessage.type === "success" ? "text-green-800" : "text-red-800"}
+                  >
+                    {databaseMessage.text}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
           </div>
 
           {config.type !== "sqlite" && (
@@ -194,7 +459,11 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                 id="username"
                 placeholder="username"
                 value={config.username || ""}
-                onChange={(e) => setConfig((prev) => ({ ...prev, username: e.target.value }))}
+                onChange={(e) => {
+                  setConfig((prev) => ({ ...prev, username: e.target.value }))
+                  setTestResult(null)
+                  setDatabaseMessage(null)
+                }}
               />
             </div>
           )}
@@ -209,7 +478,11 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                 type={showPassword ? "text" : "password"}
                 placeholder="password"
                 value={config.password || ""}
-                onChange={(e) => setConfig((prev) => ({ ...prev, password: e.target.value }))}
+                onChange={(e) => {
+                  setConfig((prev) => ({ ...prev, password: e.target.value }))
+                  setTestResult(null)
+                  setDatabaseMessage(null)
+                }}
               />
               <Button
                 type="button"
@@ -229,7 +502,11 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
             <Switch
               id="ssl"
               checked={config.ssl || false}
-              onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, ssl: checked }))}
+              onCheckedChange={(checked) => {
+                setConfig((prev) => ({ ...prev, ssl: checked }))
+                setTestResult(null)
+                setDatabaseMessage(null)
+              }}
             />
             <Label htmlFor="ssl">Use SSL Connection</Label>
           </div>
