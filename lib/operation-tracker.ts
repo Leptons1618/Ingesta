@@ -51,12 +51,53 @@ export interface TableResult {
 }
 
 export class OperationTracker {
+  private static readonly STORAGE_KEY = "ingesta-operation-history"
   private static operations: Map<string, OperationResult> = new Map()
+  private static hydrated = false
+
+  private static hydrateOperations(): void {
+    if (this.hydrated || typeof window === "undefined") {
+      return
+    }
+
+    try {
+      const stored = localStorage.getItem(this.STORAGE_KEY)
+      if (!stored) {
+        this.hydrated = true
+        return
+      }
+
+      const parsed = JSON.parse(stored) as Array<Omit<OperationResult, "timestamp"> & { timestamp: string }>
+      this.operations = new Map(
+        parsed.map((operation) => [
+          operation.id,
+          {
+            ...operation,
+            timestamp: new Date(operation.timestamp),
+          },
+        ]),
+      )
+    } catch {
+      this.operations = new Map()
+    } finally {
+      this.hydrated = true
+    }
+  }
+
+  private static persistOperations(): void {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(Array.from(this.operations.values())))
+  }
 
   static createOperation(
     operation: "import" | "sql_generation",
     configuration: OperationResult["configuration"],
   ): string {
+    this.hydrateOperations()
+
     const id = `op_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
     const operationResult: OperationResult = {
@@ -84,22 +125,34 @@ export class OperationTracker {
     }
 
     this.operations.set(id, operationResult)
+    this.persistOperations()
     return id
   }
 
   static updateOperation(id: string, updates: Partial<OperationResult>): void {
+    this.hydrateOperations()
+
     const operation = this.operations.get(id)
     if (operation) {
       this.operations.set(id, { ...operation, ...updates })
+      this.persistOperations()
     }
   }
 
   static getOperation(id: string): OperationResult | undefined {
+    this.hydrateOperations()
     return this.operations.get(id)
   }
 
   static getAllOperations(): OperationResult[] {
+    this.hydrateOperations()
     return Array.from(this.operations.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+  }
+
+  static recordOperation(result: OperationResult): void {
+    this.hydrateOperations()
+    this.operations.set(result.id, result)
+    this.persistOperations()
   }
 
   static generateMockResult(): OperationResult {

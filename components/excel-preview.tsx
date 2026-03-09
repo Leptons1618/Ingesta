@@ -27,9 +27,8 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
 
   return (
     <div className="space-y-6">
-      {/* Summary Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
+        <Card className="card-shell">
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
               <FileSpreadsheet className="w-4 h-4 text-primary" />
@@ -41,7 +40,7 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="card-shell">
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-primary" />
@@ -53,7 +52,7 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="card-shell">
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
               <Eye className="w-4 h-4 text-primary" />
@@ -65,7 +64,7 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="card-shell">
           <CardContent className="p-4 flex items-center justify-center">
             <Button onClick={onProceedToMapping} className="w-full">
               Proceed to Mapping
@@ -75,8 +74,7 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
         </Card>
       </div>
 
-      {/* File and Sheet Selection */}
-      <Card>
+      <Card className="card-shell">
         <CardHeader>
           <CardTitle>Data Preview</CardTitle>
           <CardDescription>Review your Excel data before proceeding to field mapping</CardDescription>
@@ -89,9 +87,9 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
               setSelectedSheet(0)
             }}
           >
-            <TabsList className="grid w-full grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            <TabsList className="grid h-auto w-full grid-cols-1 gap-2 bg-transparent p-0 md:grid-cols-2 lg:grid-cols-3">
               {files.map((file, index) => (
-                <TabsTrigger key={index} value={index.toString()} className="text-left">
+                <TabsTrigger key={index} value={index.toString()} className="justify-start border bg-card px-3 py-3 text-left shadow-none">
                   <div className="flex items-center gap-2 truncate">
                     <FileSpreadsheet className="w-4 h-4" />
                     <span className="truncate">{file.name}</span>
@@ -113,6 +111,7 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
                       variant={selectedSheet === sheetIndex ? "default" : "outline"}
                       size="sm"
                       onClick={() => setSelectedSheet(sheetIndex)}
+                      className="rounded-full"
                     >
                       {sheet.name}
                       <Badge variant="secondary" className="ml-2">
@@ -124,7 +123,7 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
 
                 {/* Data Table */}
                 {currentSheet && (
-                  <Card>
+                  <Card className="card-shell">
                     <CardHeader>
                       <CardTitle className="text-lg">{currentSheet.name}</CardTitle>
                       <CardDescription>
@@ -132,13 +131,14 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <ScrollArea className="h-96 w-full">
-                        <Table>
+                      <div className="table-shell">
+                        <ScrollArea className="h-96 w-full">
+                          <Table>
                           <TableHeader>
                             <TableRow>
                               <TableHead className="w-12">#</TableHead>
                               {currentSheet.headers.map((header, index) => (
-                                <TableHead key={index} className="min-w-32">
+                                <TableHead key={index} className="min-w-32 font-semibold">
                                   {header}
                                 </TableHead>
                               ))}
@@ -151,15 +151,16 @@ export function ExcelPreview({ files, onProceedToMapping }: ExcelPreviewProps) {
                                   {rowIndex + 1}
                                 </TableCell>
                                 {row.map((cell, cellIndex) => (
-                                  <TableCell key={cellIndex} className="max-w-48 truncate">
-                                    {cell?.toString() || ""}
+                                  <TableCell key={cellIndex} className="max-w-48 truncate align-top">
+                                    <span className="line-clamp-1">{cell?.toString() || ""}</span>
                                   </TableCell>
                                 ))}
                               </TableRow>
                             ))}
                           </TableBody>
-                        </Table>
-                      </ScrollArea>
+                          </Table>
+                        </ScrollArea>
+                      </div>
 
                       {currentSheet.rowCount > 50 && (
                         <div className="mt-4 text-center">

@@ -66,7 +66,7 @@ export function DatabaseConnectionList({
 
   if (connections.length === 0) {
     return (
-      <Card>
+      <Card className="card-shell">
         <CardContent className="flex flex-col items-center justify-center py-12">
           <Database className="w-12 h-12 text-muted-foreground mb-4" />
           <h3 className="text-lg font-semibold text-foreground mb-2">No Database Connections</h3>
@@ -80,7 +80,7 @@ export function DatabaseConnectionList({
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="card-shell">
         <CardHeader>
           <CardTitle className="text-lg">Saved Connections</CardTitle>
           <CardDescription>Select a database connection to proceed with data mapping</CardDescription>
@@ -89,7 +89,7 @@ export function DatabaseConnectionList({
           {connections.map((connection) => (
             <div
               key={connection.id}
-              className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors"
+              className="flex flex-col gap-4 rounded-xl border border-border bg-muted/20 p-4 transition-colors hover:bg-muted/35 md:flex-row md:items-center md:justify-between"
             >
               <div className="flex items-center gap-4">
                 <div className={`p-2 rounded-lg bg-muted ${getDatabaseIcon(connection.type)}`}>
@@ -112,7 +112,7 @@ export function DatabaseConnectionList({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 self-end md:self-auto">
                 <Button
                   variant="outline"
                   size="sm"
