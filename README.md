@@ -290,13 +290,39 @@ See [MULTIPLE_TABLE_CREATION_FIX.md](MULTIPLE_TABLE_CREATION_FIX.md) for detaile
 ### Database Operations
 - `POST /api/database/test-connection` - Test database connection
 - `POST /api/database/create-table` - Create table with schema
-- `POST /api/database/insert-data` - Insert data into table
+- `POST /api/database/insert-data` - Insert data into table (supports batch-size tuning + cleaning controls)
 - `POST /api/database/preview-table` - Preview table data (first 10 rows)
 - `POST /api/database/get-tables` - List all tables in database
 
 ### Excel Operations
 - `POST /api/excel/analyze` - Analyze Excel file structure
 - `POST /api/excel/upload` - Upload and parse Excel files
+
+## ⚡ UX + Scalability Upgrade Highlights
+
+Recent platform upgrades focus on two goals: making the import workflow easier for non-expert users and making large imports safer to run in production-like environments.
+
+### 1) Workflow Guidance Layer (User Experience)
+- The main workflow now surfaces a **readiness score**, top blockers, and recommendations.
+- Guidance is computed from live workflow state (files analyzed, connection state, selected sheets, created tables, recent operations) to keep users on a high-confidence path.
+- This improves onboarding by telling users what to do next instead of relying on implicit UI knowledge.
+
+### 2) Import Execution Controls (User + Operator Friendly)
+- Table creation now includes execution settings for:
+  - batch size,
+  - null handling strategy,
+  - empty-row skipping,
+  - string trimming,
+  - optional type conversion,
+  - optional continue-on-batch-error mode.
+- These controls allow the same product to serve both quick small imports and more careful enterprise-style runs.
+
+### 3) Batch/Chunk-Oriented Insert Path (Scale)
+- `/api/database/insert-data` now processes incoming rows in bounded batches.
+- Batch metadata is returned (total/processed/failed batches, duration, chunk errors), giving users and integrators observability into import health.
+- Chunking reduces peak request-processing pressure and provides failure isolation for large datasets.
+
+For the full API contract and examples, see `/home/runner/work/Ingesta/Ingesta/docs/API_ROUTES.md`.
 
 ## 🤝 Contributing
 
