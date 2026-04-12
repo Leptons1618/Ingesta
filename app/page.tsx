@@ -34,6 +34,12 @@ import { DataTypeDetector } from "@/lib/data-type-detector"
 import { type DatabaseConfig, type DatabaseTable } from "@/lib/database-manager"
 import { ExcelParser, type ParsedData } from "@/lib/excel-parser"
 import { OperationTracker, type OperationResult } from "@/lib/operation-tracker"
+import {
+  calculateReadinessScore,
+  getWorkflowBlockers,
+  getWorkflowRecommendations,
+  type WorkflowSnapshot,
+} from "@/lib/workflow-insights"
 
 type SelectedSheet = {
   fileName: string
@@ -113,9 +119,11 @@ export default function HomePage() {
   >([])
   const [createdTables, setCreatedTables] = useState<CreatedTableSummary[]>([])
   const [operationResult, setOperationResult] = useState<OperationResult | null>(null)
+  const [recentOperationCount, setRecentOperationCount] = useState(0)
 
   useEffect(() => {
     setSavedConnections(ConnectionStorage.getAllConnections())
+    setRecentOperationCount(OperationTracker.getAllOperations().length)
   }, [])
 
   const handleFileUpload = useCallback((files: File[]) => {
@@ -309,6 +317,7 @@ export default function HomePage() {
 
     setOperationResult(result)
     OperationTracker.recordOperation(result)
+    setRecentOperationCount(OperationTracker.getAllOperations().length)
     setCurrentStep(7)
   }, [createdTables, selectedConnection])
 
@@ -341,6 +350,40 @@ export default function HomePage() {
   )
 
   const currentStage = stageMeta[currentStep]
+  const workflowSnapshot = useMemo<WorkflowSnapshot>(
+    () => ({
+      currentStep,
+      uploadedFileCount: uploadedFiles.length,
+      analyzedFileCount: parsedData?.files.length ?? 0,
+      analyzedSheetCount: parsedData?.totalSheets ?? 0,
+      analyzedRowCount: parsedData?.totalRows ?? 0,
+      savedConnectionCount: savedConnections.length,
+      hasSelectedConnection: Boolean(selectedConnection),
+      selectedSheetCount: selectedSheets.length,
+      sheetsToCreate: sheetsForTableCreation.length,
+      sheetsToMap: selectedSheets.filter((sheet) => sheet.action === "map").length,
+      createdTableCount: createdTables.length,
+      recentOperationCount,
+      processingError,
+    }),
+    [
+      createdTables.length,
+      currentStep,
+      parsedData?.files.length,
+      parsedData?.totalRows,
+      parsedData?.totalSheets,
+      processingError,
+      recentOperationCount,
+      savedConnections.length,
+      selectedConnection,
+      selectedSheets,
+      sheetsForTableCreation.length,
+      uploadedFiles.length,
+    ],
+  )
+  const readinessScore = useMemo(() => calculateReadinessScore(workflowSnapshot), [workflowSnapshot])
+  const workflowBlockers = useMemo(() => getWorkflowBlockers(workflowSnapshot), [workflowSnapshot])
+  const workflowRecommendations = useMemo(() => getWorkflowRecommendations(workflowSnapshot), [workflowSnapshot])
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -395,6 +438,39 @@ export default function HomePage() {
                 </Card>
               ))}
             </div>
+
+            <Card className="card-shell">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center justify-between">
+                  <span>Workflow guidance</span>
+                  <Badge variant="outline">Readiness {readinessScore}%</Badge>
+                </CardTitle>
+                <CardDescription>Actionable recommendations to keep imports reliable at scale.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {workflowBlockers.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Blockers</p>
+                    <ul className="list-disc space-y-1 pl-5 text-sm text-foreground">
+                      {workflowBlockers.slice(0, 3).map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No blockers detected right now.</p>
+                )}
+
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recommendations</p>
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-foreground">
+                    {workflowRecommendations.slice(0, 3).map((recommendation) => (
+                      <li key={recommendation.id}>{recommendation.detail}</li>
+                    ))}
+                  </ul>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         )}
 

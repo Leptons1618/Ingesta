@@ -16,6 +16,15 @@ import { type DatabaseConfig } from "@/lib/database-manager"
 import { DataTypeDetector, type TableCreationConfig, type ColumnAnalysis } from "@/lib/data-type-detector"
 import { DataTransformer } from "@/lib/data-transformer"
 
+type InsertExecutionSettings = {
+  batchSize: number
+  continueOnChunkError: boolean
+  handleNulls: "empty" | "default" | "skip" | "fail"
+  skipEmptyRows: boolean
+  trimStrings: boolean
+  convertTypes: boolean
+}
+
 interface TableCreationInterfaceProps {
   databaseConfig: DatabaseConfig
   selectedSheets: Array<{ 
@@ -39,6 +48,14 @@ export function TableCreationInterface({
   const [isCreating, setIsCreating] = useState(false)
   const [creationResults, setCreationResults] = useState<Array<{ success: boolean; message: string; tableName: string }>>([])
   const [analysisInsights, setAnalysisInsights] = useState<string[]>([])
+  const [executionSettings, setExecutionSettings] = useState<InsertExecutionSettings>({
+    batchSize: 1000,
+    continueOnChunkError: false,
+    handleNulls: "default",
+    skipEmptyRows: true,
+    trimStrings: true,
+    convertTypes: false,
+  })
 
   const currentSheet = selectedSheets[currentSheetIndex]
   const currentConfig = tableConfigs[currentSheetIndex]
@@ -241,7 +258,8 @@ export function TableCreationInterface({
             config: databaseConfig,
             tableName: config.tableName,
             data: transformedData,
-            columnNames: config.columns.map(col => col.name)
+            columnNames: config.columns.map(col => col.name),
+            execution: executionSettings,
           }),
         })
         
@@ -249,10 +267,14 @@ export function TableCreationInterface({
         console.log('Insert result:', insertResult)
         
         const success = insertResult.success
+        const insertedRows = insertResult.details?.insertedRows || 0
+        const skippedRows = insertResult.details?.skippedRows || 0
+        const processedBatches = insertResult.details?.processedBatches
+        const totalBatches = insertResult.details?.totalBatches
         results.push({
           success,
           message: success 
-            ? `✅ Table "${config.tableName}" created successfully with ${insertResult.details?.insertedRows || 0} rows`
+            ? `✅ Table "${config.tableName}" created successfully with ${insertedRows} rows${skippedRows > 0 ? ` (${skippedRows} skipped)` : ''}${processedBatches && totalBatches ? ` across ${processedBatches}/${totalBatches} batches` : ''}`
             : `❌ ${insertResult.message}`,
           tableName: config.tableName
         })
@@ -421,6 +443,94 @@ export function TableCreationInterface({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </div>
+
+          {/* Import Execution Settings */}
+          <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold">Import Execution Settings</h3>
+              <p className="text-xs text-muted-foreground">
+                Tune throughput and data cleaning behavior for larger imports.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="batchSize" className="text-sm font-medium">Batch Size</Label>
+                <Input
+                  id="batchSize"
+                  type="number"
+                  min={1}
+                  max={10000}
+                  value={executionSettings.batchSize}
+                  onChange={(event) =>
+                    setExecutionSettings((prev) => ({
+                      ...prev,
+                      batchSize: Math.max(1, Math.min(10000, Number(event.target.value) || 1)),
+                    }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">Recommended: 500–2000 rows per batch.</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="nullHandling" className="text-sm font-medium">Null Handling</Label>
+                <Select
+                  value={executionSettings.handleNulls}
+                  onValueChange={(value: InsertExecutionSettings["handleNulls"]) =>
+                    setExecutionSettings((prev) => ({ ...prev, handleNulls: value }))
+                  }
+                >
+                  <SelectTrigger id="nullHandling">
+                    <SelectValue placeholder="Choose null handling strategy" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default fallback values</SelectItem>
+                    <SelectItem value="empty">Preserve empty values</SelectItem>
+                    <SelectItem value="skip">Skip invalid rows</SelectItem>
+                    <SelectItem value="fail">Fail on null violations</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="flex items-center justify-between rounded-md border bg-background p-3">
+                <span className="text-sm">Continue when a batch fails</span>
+                <Switch
+                  checked={executionSettings.continueOnChunkError}
+                  onCheckedChange={(checked) =>
+                    setExecutionSettings((prev) => ({ ...prev, continueOnChunkError: checked }))
+                  }
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-md border bg-background p-3">
+                <span className="text-sm">Skip empty rows</span>
+                <Switch
+                  checked={executionSettings.skipEmptyRows}
+                  onCheckedChange={(checked) =>
+                    setExecutionSettings((prev) => ({ ...prev, skipEmptyRows: checked }))
+                  }
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-md border bg-background p-3">
+                <span className="text-sm">Trim string values</span>
+                <Switch
+                  checked={executionSettings.trimStrings}
+                  onCheckedChange={(checked) =>
+                    setExecutionSettings((prev) => ({ ...prev, trimStrings: checked }))
+                  }
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-md border bg-background p-3">
+                <span className="text-sm">Convert value types</span>
+                <Switch
+                  checked={executionSettings.convertTypes}
+                  onCheckedChange={(checked) =>
+                    setExecutionSettings((prev) => ({ ...prev, convertTypes: checked }))
+                  }
+                />
+              </label>
             </div>
           </div>
 
