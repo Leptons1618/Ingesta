@@ -101,6 +101,34 @@ The Ingesta API provides comprehensive endpoints for Excel-to-Database migration
 - `config: DatabaseConfig` - Database configuration
 - `tableName: string` - Target table name
 - `data: any[][]` - Data rows to insert
+- `columnNames?: string[]` - Explicit column names for inserts
+- `execution?: object` - Execution tuning options for scale and data-quality behavior:
+  - `batchSize?: number` - Chunk size (1-10000, default: 1000)
+  - `continueOnChunkError?: boolean` - Continue importing next chunks if one chunk fails
+  - `handleNulls?: "empty" | "default" | "skip" | "fail"` - Null-value strategy
+  - `skipEmptyRows?: boolean` - Skip fully empty rows
+  - `trimStrings?: boolean` - Trim string values before insert
+  - `convertTypes?: boolean` - Attempt type coercion during cleaning
+
+**Response:**
+```json
+{
+  "success": true,
+  "partialSuccess": false,
+  "message": "12000 rows inserted successfully",
+  "details": {
+    "insertedRows": 12000,
+    "skippedRows": 34,
+    "warnings": [],
+    "batchSize": 1000,
+    "totalBatches": 12,
+    "processedBatches": 12,
+    "failedBatches": 0,
+    "chunkErrors": [],
+    "durationMs": 1453
+  }
+}
+```
 
 ### 3. Sheet Analysis & Selection (`/api/sheets/`)
 
