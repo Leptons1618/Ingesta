@@ -3,11 +3,12 @@
 import Link from "next/link"
 import { ArrowLeft, Monitor, MoonStar, Palette, SlidersHorizontal, SunMedium, TableProperties } from "lucide-react"
 
+import { PageHeader } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { themePresetOptions, useAppSettingsStore, type TableDensity, type ThemeMode } from "@/lib/app-settings-store"
+import { themePresetOptions, useAppSettingsStore, type TableDensity, type ThemeMode } from "@/lib/settings"
 
 const themeModeOptions: Array<{ value: ThemeMode; label: string; icon: typeof SunMedium }> = [
   { value: "light", label: "Light", icon: SunMedium },
@@ -34,24 +35,23 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border bg-background">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-            <p className="text-sm text-muted-foreground">Personalize the look, feel, and data workspace behavior.</p>
-          </div>
-
-          <div className="flex items-center gap-3">
+      <PageHeader
+        title="Settings"
+        description="Personalize the look, feel, and data workspace behaviour."
+        actions={
+          <>
             <Button variant="outline" asChild>
               <Link href="/">
                 <ArrowLeft className="h-4 w-4" />
                 Back
               </Link>
             </Button>
-            <Button variant="outline" onClick={resetSettings}>Reset defaults</Button>
-          </div>
-        </div>
-      </header>
+            <Button variant="outline" onClick={resetSettings}>
+              Reset defaults
+            </Button>
+          </>
+        }
+      />
 
       <main className="mx-auto grid w-full max-w-5xl gap-6 px-6 py-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">

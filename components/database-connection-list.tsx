@@ -1,25 +1,23 @@
 "use client"
 
 import { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Database, Eye, Loader2, Trash2 } from "lucide-react"
+
+import { EmptyState, StatusAlert } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Database, Trash2, AlertCircle, Loader2, Eye } from "lucide-react"
-import { type DatabaseConfig, type DatabaseTable } from "@/lib/database-manager"
-import { ConnectionStorage } from "@/lib/connection-storage"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { postJson } from "@/lib/api"
+import { ConnectionStorage } from "@/lib/storage"
+import type { DatabaseConfig, DatabaseTable } from "@/lib/types"
 
 interface DatabaseConnectionListProps {
   connections: DatabaseConfig[]
-  onConnectionRemoved: (id: string) => void
-  onConnectionSelected: (config: DatabaseConfig, tables: DatabaseTable[]) => void
+  onRemoved: (connections: DatabaseConfig[]) => void
+  onSelected: (config: DatabaseConfig, tables: DatabaseTable[]) => void
 }
 
-export function DatabaseConnectionList({
-  connections,
-  onConnectionRemoved,
-  onConnectionSelected,
-}: DatabaseConnectionListProps) {
+export function DatabaseConnectionList({ connections, onRemoved, onSelected }: DatabaseConnectionListProps) {
   const [loadingTables, setLoadingTables] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,53 +26,32 @@ export function DatabaseConnectionList({
     setError(null)
 
     try {
-      const response = await fetch('/api/database/get-tables', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      })
-      const data = await response.json()
-      
-      if (data.error) {
-        setError(data.message || "Failed to load database tables")
+      const response = await postJson<{ tables: DatabaseTable[] }>("/api/get-tables", config)
+
+      if (!response.ok) {
+        setError(response.error)
         return
       }
-      
-      // Always proceed, even with empty tables - user can create new tables
-      onConnectionSelected(config, data.tables || [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load database tables")
+
+      // A connection with no tables is still usable: that is where new tables go.
+      onSelected(config, response.data.tables)
     } finally {
       setLoadingTables(null)
     }
   }
 
   const handleRemoveConnection = (id: string) => {
-    ConnectionStorage.removeConnection(id)
-    onConnectionRemoved(id)
-  }
-
-  const getDatabaseIcon = (type: string) => {
-    const colors = {
-      mysql: "text-orange-500",
-      postgresql: "text-blue-500",
-      sqlite: "text-green-500",
-      mssql: "text-red-500",
-    }
-    return colors[type as keyof typeof colors] || "text-gray-500"
+    ConnectionStorage.remove(id)
+    onRemoved(ConnectionStorage.getAll())
   }
 
   if (connections.length === 0) {
     return (
-      <Card className="card-shell">
-        <CardContent className="flex flex-col items-center justify-center py-12">
-          <Database className="w-12 h-12 text-muted-foreground mb-4" />
-          <h3 className="text-lg font-semibold text-foreground mb-2">No Database Connections</h3>
-          <p className="text-sm text-muted-foreground text-center">
-            Add a database connection to start mapping your Excel data to database tables.
-          </p>
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={<Database className="h-12 w-12" />}
+        title="No saved connections"
+        description="Add a connection to choose where the tables go."
+      />
     )
   }
 
@@ -82,8 +59,8 @@ export function DatabaseConnectionList({
     <div className="space-y-4">
       <Card className="card-shell">
         <CardHeader>
-          <CardTitle className="text-lg">Saved Connections</CardTitle>
-          <CardDescription>Select a database connection to proceed with data mapping</CardDescription>
+          <CardTitle className="text-lg">Saved connections</CardTitle>
+          <CardDescription>Select a connection to choose the database for your new tables.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {connections.map((connection) => (
@@ -92,22 +69,22 @@ export function DatabaseConnectionList({
               className="flex flex-col gap-4 rounded-xl border border-border bg-muted/20 p-4 transition-colors hover:bg-muted/35 md:flex-row md:items-center md:justify-between"
             >
               <div className="flex items-center gap-4">
-                <div className={`p-2 rounded-lg bg-muted ${getDatabaseIcon(connection.type)}`}>
-                  <Database className="w-5 h-5" />
+                <div className="rounded-lg bg-muted p-2 text-muted-foreground">
+                  <Database className="h-5 w-5" />
                 </div>
 
                 <div>
                   <h4 className="font-semibold text-foreground">{connection.name}</h4>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="mt-1 flex items-center gap-2">
                     <Badge variant="outline" className="text-xs">
                       {connection.type.toUpperCase()}
                     </Badge>
                     <span className="text-sm text-muted-foreground">{connection.database}</span>
-                    {connection.host && (
+                    {connection.host ? (
                       <span className="text-sm text-muted-foreground">
                         @ {connection.host}:{connection.port}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -121,12 +98,12 @@ export function DatabaseConnectionList({
                 >
                   {loadingTables === connection.id ? (
                     <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       Loading...
                     </>
                   ) : (
                     <>
-                      <Eye className="w-4 h-4 mr-2" />
+                      <Eye className="h-4 w-4 mr-2" />
                       Select
                     </>
                   )}
@@ -137,8 +114,9 @@ export function DatabaseConnectionList({
                   size="sm"
                   onClick={() => handleRemoveConnection(connection.id)}
                   className="text-destructive hover:text-destructive"
+                  aria-label={`Remove ${connection.name}`}
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -146,12 +124,7 @@ export function DatabaseConnectionList({
         </CardContent>
       </Card>
 
-      {error && (
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error ? <StatusAlert tone="error">{error}</StatusAlert> : null}
     </div>
   )
 }

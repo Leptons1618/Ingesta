@@ -2,10 +2,14 @@
 
 import type React from "react"
 
-import { useCallback, useState } from "react"
-import { Upload, FileSpreadsheet, X } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useState } from "react"
+import { Upload } from "lucide-react"
+
+import { StatusAlert } from "@/components/common"
+import { formatBytes } from "@/lib/utils"
+
+const MAX_FILE_SIZE = 50 * 1024 * 1024
+const VALID_EXTENSIONS = [".xlsx", ".xls"]
 
 interface FileUploadZoneProps {
   onFileUpload: (files: File[]) => void
@@ -15,113 +19,77 @@ export function FileUploadZone({ onFileUpload }: FileUploadZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
 
-  const validateFiles = useCallback((files: FileList | File[]) => {
-    const fileArray = Array.from(files)
-    const validExtensions = [".xlsx", ".xls"]
-    const maxSize = 50 * 1024 * 1024 // 50MB
+  const acceptFiles = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return
 
-    const invalidFiles = fileArray.filter((file) => {
-      const extension = file.name.toLowerCase().substring(file.name.lastIndexOf("."))
-      return !validExtensions.includes(extension) || file.size > maxSize
+    const outcomes = Array.from(fileList).map((file) => {
+      const extension = file.name.toLowerCase().slice(file.name.lastIndexOf("."))
+
+      if (!VALID_EXTENSIONS.includes(extension)) return { file, reason: `${file.name} is not an Excel file.` }
+      if (file.size > MAX_FILE_SIZE) return { file, reason: `${file.name} is ${formatBytes(file.size)}.` }
+      return { file, reason: "" }
     })
 
-    if (invalidFiles.length > 0) {
-      setUploadError(`Invalid files detected. Please upload Excel files (.xlsx, .xls) under 50MB.`)
-      return []
+    const rejected = outcomes.filter((outcome) => outcome.reason !== "")
+
+    if (rejected.length > 0) {
+      setUploadError(
+        `${rejected.map((outcome) => outcome.reason).join(" ")} Upload .xlsx or .xls files under 50MB.`,
+      )
+      return
     }
 
     setUploadError(null)
-    return fileArray
-  }, [])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(true)
-  }, [])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-  }, [])
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      setIsDragOver(false)
-
-      const files = validateFiles(e.dataTransfer.files)
-      if (files.length > 0) {
-        onFileUpload(files)
-      }
-    },
-    [validateFiles, onFileUpload],
-  )
-
-  const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files) {
-        const files = validateFiles(e.target.files)
-        if (files.length > 0) {
-          onFileUpload(files)
-        }
-      }
-    },
-    [validateFiles, onFileUpload],
-  )
-
-  const clearError = useCallback(() => {
-    setUploadError(null)
-  }, [])
+    onFileUpload(outcomes.map((outcome) => outcome.file))
+  }
 
   return (
     <div className="space-y-4">
       <div
-        className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+        className={`relative rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
           isDragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/50"
         }`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        onDragOver={(event: React.DragEvent) => {
+          event.preventDefault()
+          setIsDragOver(true)
+        }}
+        onDragLeave={(event: React.DragEvent) => {
+          event.preventDefault()
+          setIsDragOver(false)
+        }}
+        onDrop={(event: React.DragEvent) => {
+          event.preventDefault()
+          setIsDragOver(false)
+          acceptFiles(event.dataTransfer.files)
+        }}
       >
         <input
           type="file"
           multiple
           accept=".xlsx,.xls"
-          onChange={handleFileSelect}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          aria-label="Upload Excel files"
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) => acceptFiles(event.target.files)}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
         />
 
         <div className="flex flex-col items-center gap-4">
-          <div className={`p-3 rounded-full ${isDragOver ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-            <Upload className="w-8 h-8" />
+          <div className={`rounded-full p-3 ${isDragOver ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+            <Upload className="h-8 w-8" />
           </div>
 
           <div className="space-y-2">
             <h3 className="text-lg font-semibold text-foreground">
-              {isDragOver ? "Drop files here" : "Upload Excel Files"}
+              {isDragOver ? "Drop files here" : "Upload Excel files"}
             </h3>
             <p className="text-sm text-muted-foreground">Drag and drop your Excel files here, or click to browse</p>
-            <p className="text-xs text-muted-foreground">Supports .xlsx and .xls files up to 50MB each</p>
+            <p className="text-xs text-muted-foreground">
+              Supports .xlsx and .xls files up to {formatBytes(MAX_FILE_SIZE)} each
+            </p>
           </div>
-
-          <Button variant="outline" size="sm" className="mt-2 bg-transparent">
-            <FileSpreadsheet className="w-4 h-4 mr-2" />
-            Choose Files
-          </Button>
         </div>
       </div>
 
-      {uploadError && (
-        <Alert variant="destructive">
-          <X className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between">
-            {uploadError}
-            <Button variant="ghost" size="sm" onClick={clearError}>
-              <X className="w-4 h-4" />
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
+      {uploadError ? <StatusAlert tone="error">{uploadError}</StatusAlert> : null}
     </div>
   )
 }

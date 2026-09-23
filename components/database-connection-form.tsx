@@ -1,73 +1,70 @@
 "use client"
 
 import { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Database, Eye, EyeOff, Loader2 } from "lucide-react"
+
+import { StatusAlert } from "@/components/common"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Database, CheckCircle, AlertCircle, Eye, EyeOff } from "lucide-react"
-import { type DatabaseConfig, type ConnectionTestResult, type DatabaseServerOptions } from "@/lib/database-manager"
-import { ConnectionStorage } from "@/lib/connection-storage"
+import { postJson } from "@/lib/api"
+import { ConnectionStorage } from "@/lib/storage"
+import { DEFAULT_PORTS, type ConnectionTestResult, type DatabaseConfig, type DatabaseType, type ServerOptions } from "@/lib/types"
 
 interface DatabaseConnectionFormProps {
-  onConnectionSaved: (config: DatabaseConfig) => void
+  onSaved: (connections: DatabaseConfig[]) => void
 }
 
-export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnectionFormProps) {
-  const [config, setConfig] = useState<Partial<DatabaseConfig>>({
-    type: "mysql",
-    port: 3306,
-    ssl: false,
-  })
+/** The draft keeps `type` always set so server options never need a fallback. */
+type ConnectionDraft = Omit<Partial<DatabaseConfig>, "type"> & { type: DatabaseType }
+
+type DatabaseMessage = { tone: "success" | "error"; text: string }
+
+const emptyDraft: ConnectionDraft = { type: "mysql", port: DEFAULT_PORTS.mysql, ssl: false }
+
+export function DatabaseConnectionForm({ onSaved }: DatabaseConnectionFormProps) {
+  const [config, setConfig] = useState<ConnectionDraft>(emptyDraft)
   const [showPassword, setShowPassword] = useState(false)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
   const [databaseOptions, setDatabaseOptions] = useState<string[]>([])
   const [isLoadingDatabases, setIsLoadingDatabases] = useState(false)
   const [isCreatingDatabase, setIsCreatingDatabase] = useState(false)
   const [newDatabaseName, setNewDatabaseName] = useState("")
-  const [databaseMessage, setDatabaseMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [databaseMessage, setDatabaseMessage] = useState<DatabaseMessage | null>(null)
 
-  const handleTypeChange = (type: DatabaseConfig["type"]) => {
-    const defaultPorts = {
-      mysql: 3306,
-      postgresql: 5432,
-      sqlite: undefined,
-      mssql: 1433,
-    }
-
-    setDatabaseOptions([])
+  /** Any edit invalidates the last test and the last database message. */
+  const setField = (patch: Partial<DatabaseConfig>) => {
+    setConfig((prev) => ({ ...prev, ...patch }))
+    setTestResult(null)
     setDatabaseMessage(null)
-    setNewDatabaseName("")
+  }
 
+  const handleTypeChange = (type: DatabaseType) => {
+    setDatabaseOptions([])
+    setNewDatabaseName("")
+    setTestResult(null)
+    setDatabaseMessage(null)
     setConfig((prev) => ({
       ...prev,
       type,
-      port: defaultPorts[type],
+      port: DEFAULT_PORTS[type],
       database: "",
       ssl: type === "sqlite" ? false : prev.ssl,
     }))
-    setTestResult(null)
   }
 
   const handleTestConnection = async () => {
-    if (!config.database || !config.name) {
-      setTestResult({
-        success: false,
-        message: "Please fill in connection name and database name",
-      })
+    if (!config.name || !config.database) {
+      setTestResult({ success: false, message: "Fill in a connection name and database name" })
       return
     }
 
     if (config.type !== "sqlite" && (!config.host || !config.username)) {
-      setTestResult({
-        success: false,
-        message: "Please provide host and username",
-      })
+      setTestResult({ success: false, message: "Provide a host and username for server connections" })
       return
     }
 
@@ -75,74 +72,45 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
     setTestResult(null)
     setDatabaseMessage(null)
 
-    try {
-      const response = await fetch('/api/database/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      })
-      const result = await response.json()
-      setTestResult(result)
-    } catch (error) {
-      setTestResult({
-        success: false,
-        message: "Failed to test connection",
-      })
-    } finally {
-      setIsTestingConnection(false)
-    }
+    const response = await postJson<{ message: string; details?: ConnectionTestResult["details"] }>(
+      "/api/test-connection",
+      config,
+    )
+
+    setTestResult(
+      response.ok
+        ? { success: true, message: response.data.message, details: response.data.details }
+        : { success: false, message: response.error },
+    )
+    setIsTestingConnection(false)
   }
 
-  const handleSaveConnection = async () => {
+  const handleSaveConnection = () => {
     if (!testResult?.success) {
-      setTestResult({
-        success: false,
-        message: "Please test the connection first",
-      })
+      setTestResult({ success: false, message: "Test the connection before saving" })
       return
     }
 
-    setIsSaving(true)
-
-    try {
-      const fullConfig: DatabaseConfig = {
-        ...config,
-        id: Date.now().toString(),
-        name: config.name!,
-        database: config.database!,
-        type: config.type!,
-      } as DatabaseConfig
-
-      ConnectionStorage.saveConnection(fullConfig)
-      onConnectionSaved(fullConfig)
-
-      // Reset form
-      setConfig({
-        type: "mysql",
-        port: 3306,
-        ssl: false,
-      })
-      setTestResult(null)
-      setDatabaseOptions([])
-      setDatabaseMessage(null)
-      setNewDatabaseName("")
-    } catch (error) {
-      setTestResult({
-        success: false,
-        message: "Failed to save connection",
-      })
-    } finally {
-      setIsSaving(false)
+    const saved: DatabaseConfig = {
+      ...config,
+      id: Date.now().toString(),
+      name: config.name ?? "",
+      database: config.database ?? "",
     }
+
+    ConnectionStorage.save(saved)
+    onSaved(ConnectionStorage.getAll())
+
+    setConfig(emptyDraft)
+    setTestResult(null)
+    setDatabaseOptions([])
+    setDatabaseMessage(null)
+    setNewDatabaseName("")
   }
 
-  const buildServerOptions = (): DatabaseServerOptions | null => {
-    if (!config.type) {
-      return null
-    }
-
+  const buildServerOptions = (): ServerOptions | null => {
     if (config.type !== "sqlite" && (!config.host || !config.username)) {
-      setDatabaseMessage({ type: "error", text: "Host and username are required for server connections" })
+      setDatabaseMessage({ tone: "error", text: "Host and username are required for server connections" })
       return null
     }
 
@@ -153,13 +121,13 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
       username: config.username,
       password: config.password,
       ssl: config.ssl,
-      database: config.database?.trim() ? config.database.trim() : undefined,
+      database: config.database?.trim() || undefined,
     }
   }
 
   const handleLoadDatabases = async () => {
     if (config.type === "sqlite") {
-      setDatabaseMessage({ type: "error", text: "SQLite uses file paths; specify a file name above." })
+      setDatabaseMessage({ tone: "error", text: "SQLite uses file paths; specify a file name above." })
       return
     }
 
@@ -172,42 +140,28 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
     setDatabaseMessage(null)
 
     try {
-      const response = await fetch("/api/database/list-databases", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: serverOptions }),
-      })
+      const response = await postJson<{ databases: string[] }>("/api/list-databases", { config: serverOptions })
 
-      const result = await response.json()
-
-      if (!result.success) {
-        throw new Error(result.message || "Failed to load databases")
+      if (!response.ok) {
+        setDatabaseOptions([])
+        setDatabaseMessage({ tone: "error", text: response.error })
+        return
       }
 
-      const databases: string[] = (result.databases || []).map((db: string) => db)
-      const sortedDatabases = [...databases].sort((a, b) => a.localeCompare(b))
-      setDatabaseOptions(sortedDatabases)
+      const databases = [...response.data.databases].sort((a, b) => a.localeCompare(b))
+      setDatabaseOptions(databases)
       setDatabaseMessage({
-        type: "success",
-        text: sortedDatabases.length
-          ? `Found ${sortedDatabases.length} database${sortedDatabases.length === 1 ? "" : "s"}.`
+        tone: "success",
+        text: databases.length
+          ? `Found ${databases.length} database${databases.length === 1 ? "" : "s"}.`
           : "No databases found with the provided credentials.",
       })
 
-      if (sortedDatabases.length > 0) {
-        setConfig((prev) => ({
-          ...prev,
-          database: prev.database && prev.database.length > 0 ? prev.database : sortedDatabases[0],
-        }))
+      if (databases.length > 0) {
+        setConfig((prev) => ({ ...prev, database: prev.database || databases[0] }))
       }
 
       setTestResult(null)
-    } catch (error) {
-      setDatabaseOptions([])
-      setDatabaseMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "Failed to load databases",
-      })
     } finally {
       setIsLoadingDatabases(false)
     }
@@ -215,18 +169,18 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
 
   const handleCreateDatabase = async () => {
     if (config.type === "sqlite") {
-      setDatabaseMessage({ type: "error", text: "SQLite databases are created as files; provide a file name above." })
+      setDatabaseMessage({ tone: "error", text: "SQLite databases are created as files; provide a file name above." })
       return
     }
 
     const trimmedName = newDatabaseName.trim()
     if (!trimmedName) {
-      setDatabaseMessage({ type: "error", text: "Please enter a database name" })
+      setDatabaseMessage({ tone: "error", text: "Enter a database name" })
       return
     }
 
     if (!/^[A-Za-z0-9_]+$/.test(trimmedName)) {
-      setDatabaseMessage({ type: "error", text: "Database names may only include letters, numbers, and underscores" })
+      setDatabaseMessage({ tone: "error", text: "Database names may only include letters, numbers, and underscores" })
       return
     }
 
@@ -239,28 +193,21 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
     setDatabaseMessage(null)
 
     try {
-      const response = await fetch("/api/database/create-database", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: serverOptions, databaseName: trimmedName }),
+      const response = await postJson<{ message: string }>("/api/create-database", {
+        config: serverOptions,
+        databaseName: trimmedName,
       })
 
-      const result = await response.json()
-
-      if (!result.success) {
-        throw new Error(result.message || "Failed to create database")
+      if (!response.ok) {
+        setDatabaseMessage({ tone: "error", text: response.error })
+        return
       }
 
-      setDatabaseMessage({ type: "success", text: `Database "${trimmedName}" created successfully.` })
+      setDatabaseMessage({ tone: "success", text: `Database "${trimmedName}" created.` })
       setDatabaseOptions((prev) => Array.from(new Set([...prev, trimmedName])).sort())
       setConfig((prev) => ({ ...prev, database: trimmedName }))
       setNewDatabaseName("")
       setTestResult(null)
-    } catch (error) {
-      setDatabaseMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "Failed to create database",
-      })
     } finally {
       setIsCreatingDatabase(false)
     }
@@ -271,26 +218,26 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Database className="w-5 h-5 text-primary" />
-          Database Connection
+          Database connection
         </CardTitle>
-        <CardDescription>Configure your database connection settings</CardDescription>
+        <CardDescription>Choose where your tables will be created.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Connection Name */}
         <div className="space-y-2">
-          <Label htmlFor="name">Connection Name</Label>
+          <Label htmlFor="name">Connection name</Label>
           <Input
             id="name"
-            placeholder="My Database Connection"
+            placeholder="Production Postgres"
             value={config.name || ""}
-            onChange={(e) => setConfig((prev) => ({ ...prev, name: e.target.value }))}
+            onChange={(e) => setField({ name: e.target.value })}
           />
         </div>
 
         {/* Database Type */}
         <div className="space-y-2">
-          <Label htmlFor="type">Database Type</Label>
-          <Select value={config.type} onValueChange={handleTypeChange}>
+          <Label htmlFor="type">Database type</Label>
+          <Select value={config.type} onValueChange={(value) => handleTypeChange(value as DatabaseType)}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -313,11 +260,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                   id="host"
                   placeholder="localhost"
                   value={config.host || ""}
-                  onChange={(e) => {
-                    setConfig((prev) => ({ ...prev, host: e.target.value }))
-                    setTestResult(null)
-                    setDatabaseMessage(null)
-                  }}
+                  onChange={(e) => setField({ host: e.target.value })}
                 />
               </div>
 
@@ -327,11 +270,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                   id="port"
                   type="number"
                   value={config.port || ""}
-                  onChange={(e) => {
-                    setConfig((prev) => ({ ...prev, port: Number.parseInt(e.target.value) || undefined }))
-                    setTestResult(null)
-                    setDatabaseMessage(null)
-                  }}
+                  onChange={(e) => setField({ port: Number.parseInt(e.target.value) || undefined })}
                 />
               </div>
             </>
@@ -345,12 +284,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                   id="database"
                   placeholder={config.type === "sqlite" ? "database.db" : "my_database"}
                   value={config.database || ""}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    setConfig((prev) => ({ ...prev, database: value }))
-                    setTestResult(null)
-                    setDatabaseMessage(null)
-                  }}
+                  onChange={(e) => setField({ database: e.target.value })}
                 />
                 {config.type !== "sqlite" && (
                   <Button
@@ -379,11 +313,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                       ? config.database
                       : undefined
                   }
-                  onValueChange={(value) => {
-                    setConfig((prev) => ({ ...prev, database: value }))
-                    setTestResult(null)
-                    setDatabaseMessage(null)
-                  }}
+                  onValueChange={(value) => setField({ database: value })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select an existing database" />
@@ -401,7 +331,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
               {config.type !== "sqlite" && (
                 <div className="space-y-2 rounded-md border border-dashed p-3">
                   <Label htmlFor="new-database" className="text-sm">
-                    Create New Database
+                    Create new database
                   </Label>
                   <div className="flex flex-col md:flex-row md:items-center md:gap-2">
                     <Input
@@ -430,24 +360,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
               )}
 
               {config.type !== "sqlite" && databaseMessage && (
-                <Alert
-                  className={
-                    databaseMessage.type === "success"
-                      ? "border-green-200 bg-green-50"
-                      : "border-red-200 bg-red-50"
-                  }
-                >
-                  {databaseMessage.type === "success" ? (
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4 text-red-600" />
-                  )}
-                  <AlertDescription
-                    className={databaseMessage.type === "success" ? "text-green-800" : "text-red-800"}
-                  >
-                    {databaseMessage.text}
-                  </AlertDescription>
-                </Alert>
+                <StatusAlert tone={databaseMessage.tone}>{databaseMessage.text}</StatusAlert>
               )}
             </div>
           </div>
@@ -459,11 +372,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                 id="username"
                 placeholder="username"
                 value={config.username || ""}
-                onChange={(e) => {
-                  setConfig((prev) => ({ ...prev, username: e.target.value }))
-                  setTestResult(null)
-                  setDatabaseMessage(null)
-                }}
+                onChange={(e) => setField({ username: e.target.value })}
               />
             </div>
           )}
@@ -478,11 +387,7 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                 type={showPassword ? "text" : "password"}
                 placeholder="password"
                 value={config.password || ""}
-                onChange={(e) => {
-                  setConfig((prev) => ({ ...prev, password: e.target.value }))
-                  setTestResult(null)
-                  setDatabaseMessage(null)
-                }}
+                onChange={(e) => setField({ password: e.target.value })}
               />
               <Button
                 type="button"
@@ -502,35 +407,24 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
             <Switch
               id="ssl"
               checked={config.ssl || false}
-              onCheckedChange={(checked) => {
-                setConfig((prev) => ({ ...prev, ssl: checked }))
-                setTestResult(null)
-                setDatabaseMessage(null)
-              }}
+              onCheckedChange={(checked) => setField({ ssl: checked })}
             />
-            <Label htmlFor="ssl">Use SSL Connection</Label>
+            <Label htmlFor="ssl">Use SSL connection</Label>
           </div>
         )}
 
         {/* Test Result */}
         {testResult && (
-          <Alert className={testResult.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
-            {testResult.success ? (
-              <CheckCircle className="h-4 w-4 text-green-600" />
-            ) : (
-              <AlertCircle className="h-4 w-4 text-red-600" />
-            )}
-            <AlertDescription className={testResult.success ? "text-green-800" : "text-red-800"}>
-              {testResult.message}
-              {testResult.success && testResult.details && (
-                <div className="mt-2 space-y-1 text-sm">
-                  <div>Server Version: {testResult.details.serverVersion}</div>
-                  <div>Database: {testResult.details.databaseName}</div>
-                  <div>Tables Found: {testResult.details.tablesCount}</div>
-                </div>
-              )}
-            </AlertDescription>
-          </Alert>
+          <StatusAlert tone={testResult.success ? "success" : "error"}>
+            {testResult.message}
+            {testResult.success && testResult.details ? (
+              <div className="mt-2 space-y-1 text-sm">
+                <div>Server version: {testResult.details.serverVersion}</div>
+                <div>Database: {testResult.details.databaseName}</div>
+                <div>Tables found: {testResult.details.tablesCount}</div>
+              </div>
+            ) : null}
+          </StatusAlert>
         )}
 
         {/* Action Buttons */}
@@ -547,29 +441,22 @@ export function DatabaseConnectionForm({ onConnectionSaved }: DatabaseConnection
                 Testing...
               </>
             ) : (
-              "Test Connection"
+              "Test connection"
             )}
           </Button>
 
-          <Button onClick={handleSaveConnection} disabled={!testResult?.success || isSaving} className="flex-1">
-            {isSaving ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              "Save Connection"
-            )}
+          <Button onClick={handleSaveConnection} disabled={!testResult?.success} className="flex-1">
+            Save connection
           </Button>
         </div>
 
         {/* Connection String Preview */}
-        {config.type && config.database && (
+        {config.database && (
           <div className="space-y-2">
-            <Label>Connection String Preview</Label>
+            <Label>Connection string preview</Label>
             <div className="p-3 bg-muted rounded-lg">
               <code className="text-sm text-muted-foreground break-all">
-                {ConnectionStorage.generateConnectionString(config as DatabaseConfig)}
+                {ConnectionStorage.connectionString(config as DatabaseConfig)}
               </code>
             </div>
           </div>

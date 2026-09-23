@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import { useTheme } from "next-themes"
 
-import { useAppSettingsStore } from "@/lib/app-settings-store"
+import { useAppSettingsStore } from "@/lib/settings"
 
 export function AppSettingsProvider() {
   const { setTheme } = useTheme()

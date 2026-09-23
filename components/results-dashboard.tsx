@@ -1,182 +1,121 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { useState } from "react"
+import { Database, Download, FileSpreadsheet, Gauge, RefreshCw, Table2 } from "lucide-react"
+
+import { EmptyState, StatCard, StatGrid, StatusAlert, TableShell } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  CheckCircle,
-  AlertTriangle,
-  XCircle,
-  Clock,
-  Database,
-  FileSpreadsheet,
-  TrendingUp,
-  Download,
-  RefreshCw,
-} from "lucide-react"
-import { type OperationResult, OperationTracker } from "@/lib/operation-tracker"
+import { RunHistory } from "@/lib/storage"
+import type { OperationResult, RunStatus } from "@/lib/types"
 
 interface ResultsDashboardProps {
-  operationResult: OperationResult
+  result: OperationResult
   onStartNew: () => void
-  onViewSQL?: () => void
 }
 
-export function ResultsDashboard({ operationResult, onStartNew, onViewSQL }: ResultsDashboardProps) {
+const STATUS_TITLE: Record<RunStatus, string> = {
+  success: "Import completed",
+  partial: "Import completed with warnings",
+  failed: "Import failed",
+}
+
+const STATUS_TONE: Record<RunStatus, "success" | "warning" | "error"> = {
+  success: "success",
+  partial: "warning",
+  failed: "error",
+}
+
+const STATUS_BADGE: Record<RunStatus, "default" | "secondary" | "destructive"> = {
+  success: "default",
+  partial: "secondary",
+  failed: "destructive",
+}
+
+export function ResultsDashboard({ result, onStartNew }: ResultsDashboardProps) {
   const [selectedTab, setSelectedTab] = useState("overview")
 
-  const metrics = useMemo(
-    () => ({
-      successRate: OperationTracker.calculateSuccessRate(operationResult),
-      throughput: OperationTracker.calculateThroughput(operationResult),
-      duration: (operationResult.summary.executionTimeMs / 1000).toFixed(2),
-      avgRecordsPerFile:
-        operationResult.summary.filesProcessed > 0
-          ? Math.round(operationResult.summary.recordsProcessed / operationResult.summary.filesProcessed)
-          : 0,
-    }),
-    [operationResult],
-  )
+  const { summary, details, configuration } = result
+  const throughput = RunHistory.throughput(result)
+  const durationSeconds = (summary.executionTimeMs / 1000).toFixed(2)
+  const warnings = details.warnings
+  const problems = [
+    ...details.fileResults.flatMap((file) => file.errors.map((message) => ({ source: file.fileName, message }))),
+    ...details.tableResults.flatMap((table) => table.errors.map((message) => ({ source: table.tableName, message }))),
+  ]
+  const failedTables = details.tableResults.filter((table) => table.status !== "success")
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "success":
-        return <CheckCircle className="w-5 h-5 text-green-500" />
-      case "partial":
-        return <AlertTriangle className="w-5 h-5 text-yellow-500" />
-      case "failed":
-        return <XCircle className="w-5 h-5 text-red-500" />
-      default:
-        return <Clock className="w-5 h-5 text-gray-500" />
-    }
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "success":
-        return "bg-green-500"
-      case "partial":
-        return "bg-yellow-500"
-      case "failed":
-        return "bg-red-500"
-      default:
-        return "bg-gray-500"
-    }
-  }
+  const outcome =
+    result.status === "success"
+      ? `${summary.recordsProcessed.toLocaleString()} records written across ${summary.tablesAffected} tables.`
+      : result.status === "partial"
+        ? `${failedTables.length} of ${details.tableResults.length} tables reported problems. Fix them and run the import again.`
+        : "No records were written. Read the errors on the Logs tab, then run the import again."
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {getStatusIcon(operationResult.status)}
-              <div>
-                <CardTitle className="text-2xl">
-                  Operation{" "}
-                  {operationResult.status === "success"
-                    ? "Completed Successfully"
-                    : operationResult.status === "partial"
-                      ? "Completed with Warnings"
-                      : "Failed"}
-                </CardTitle>
-                <CardDescription>
-                  {operationResult.operation === "import" ? "Data Import" : "SQL Generation"} •
-                  {operationResult.timestamp.toLocaleString()} • Duration: {metrics.duration}s
-                </CardDescription>
-              </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-2xl">
+                {STATUS_TITLE[result.status]}
+                <Badge variant={STATUS_BADGE[result.status]}>{result.status}</Badge>
+              </CardTitle>
+              <CardDescription>
+                {configuration.connectionName} · {configuration.databaseName} ·{" "}
+                {new Date(result.timestamp).toLocaleString()} · {durationSeconds}s
+              </CardDescription>
             </div>
-
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => OperationTracker.exportReport(operationResult)}>
-                <Download className="w-4 h-4 mr-2" />
-                Export Report
+              <Button variant="outline" onClick={() => RunHistory.download(result)}>
+                <Download className="mr-2 h-4 w-4" />
+                Export report
               </Button>
-              {onViewSQL && (
-                <Button variant="outline" onClick={onViewSQL}>
-                  <Database className="w-4 h-4 mr-2" />
-                  View SQL
-                </Button>
-              )}
               <Button onClick={onStartNew}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Start New Operation
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Start new run
               </Button>
             </div>
           </div>
         </CardHeader>
+        <CardContent>
+          <StatusAlert tone={STATUS_TONE[result.status]}>{outcome}</StatusAlert>
+        </CardContent>
       </Card>
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-primary/10 rounded-lg">
-                <FileSpreadsheet className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{operationResult.summary.recordsProcessed.toLocaleString()}</p>
-                <p className="text-sm text-muted-foreground">Records Processed</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <StatGrid>
+        <StatCard
+          label="Records processed"
+          value={summary.recordsProcessed.toLocaleString()}
+          icon={<FileSpreadsheet className="h-4 w-4" />}
+        />
+        <StatCard
+          label="Sheets imported"
+          value={`${summary.tablesAffected} of ${summary.sheetsProcessed}`}
+          icon={<Table2 className="h-4 w-4" />}
+          hint={failedTables.length > 0 ? `${failedTables.length} failed` : undefined}
+        />
+        <StatCard
+          label="Records per second"
+          value={throughput >= 10 ? Math.round(throughput).toLocaleString() : throughput.toFixed(1)}
+          icon={<Gauge className="h-4 w-4" />}
+          hint={`${durationSeconds}s total`}
+        />
+        <StatCard
+          label="Tables affected"
+          value={summary.tablesAffected}
+          icon={<Database className="h-4 w-4" />}
+          hint={`across ${summary.filesProcessed} file${summary.filesProcessed === 1 ? "" : "s"}`}
+        />
+      </StatGrid>
 
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-green-100 rounded-lg">
-                <CheckCircle className="w-6 h-6 text-green-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-green-600">{metrics.successRate.toFixed(1)}%</p>
-                <p className="text-sm text-muted-foreground">Success Rate</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <TrendingUp className="w-6 h-6 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{Math.round(metrics.throughput).toLocaleString()}</p>
-                <p className="text-sm text-muted-foreground">Records/Second</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <Database className="w-6 h-6 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{operationResult.summary.tablesAffected}</p>
-                <p className="text-sm text-muted-foreground">Tables Affected</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Detailed Results */}
       <Card>
         <CardHeader>
-          <CardTitle>Detailed Results</CardTitle>
+          <CardTitle>Detailed results</CardTitle>
         </CardHeader>
         <CardContent>
           <Tabs value={selectedTab} onValueChange={setSelectedTab}>
@@ -187,288 +126,181 @@ export function ResultsDashboard({ operationResult, onStartNew, onViewSQL }: Res
               <TabsTrigger value="logs">Logs</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="overview" className="space-y-6">
-              {/* Progress Overview */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">Processing Summary</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Files Processed</span>
-                        <span>{operationResult.summary.filesProcessed}</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span>Sheets Processed</span>
-                        <span>{operationResult.summary.sheetsProcessed}</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span>SQL Statements</span>
-                        <span>{operationResult.details.sqlStatements}</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span>Execution Time</span>
-                        <span>{metrics.duration}s</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+            <TabsContent value="overview" className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Card className="card-shell">
+                <CardHeader>
+                  <CardTitle className="text-lg">Run summary</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Files processed</span>
+                    <span className="font-medium">{summary.filesProcessed}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Sheets processed</span>
+                    <span className="font-medium">{summary.sheetsProcessed}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Tables affected</span>
+                    <span className="font-medium">{summary.tablesAffected}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Records processed</span>
+                    <span className="font-medium">{summary.recordsProcessed.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Import time</span>
+                    <span className="font-medium">{durationSeconds}s</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Warnings and errors</span>
+                    <span className="font-medium">
+                      {warnings.length} / {problems.length}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">Record Statistics</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-3">
-                      <div>
-                        <div className="flex justify-between text-sm mb-1">
-                          <span>Successful</span>
-                          <span className="text-green-600">
-                            {operationResult.summary.recordsSuccessful.toLocaleString()}
-                          </span>
-                        </div>
-                        <Progress
-                          value={
-                            (operationResult.summary.recordsSuccessful / operationResult.summary.recordsProcessed) * 100
-                          }
-                          className="h-2"
-                        />
-                      </div>
-
-                      {operationResult.summary.recordsFailed > 0 && (
-                        <div>
-                          <div className="flex justify-between text-sm mb-1">
-                            <span>Failed</span>
-                            <span className="text-red-600">
-                              {operationResult.summary.recordsFailed.toLocaleString()}
-                            </span>
-                          </div>
-                          <Progress
-                            value={
-                              (operationResult.summary.recordsFailed / operationResult.summary.recordsProcessed) * 100
-                            }
-                            className="h-2"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Configuration */}
-              <Card>
+              <Card className="card-shell">
                 <CardHeader>
                   <CardTitle className="text-lg">Configuration</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Database Type:</span>
-                      <p className="font-medium">{operationResult.configuration.databaseType}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Database:</span>
-                      <p className="font-medium">{operationResult.configuration.databaseName}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Connection:</span>
-                      <p className="font-medium">{operationResult.configuration.connectionName}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Batch Size:</span>
-                      <p className="font-medium">{operationResult.configuration.batchSize.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Transactions:</span>
-                      <p className="font-medium">
-                        {operationResult.configuration.useTransactions ? "Enabled" : "Disabled"}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Operation ID:</span>
-                      <p className="font-medium font-mono text-xs">{operationResult.id}</p>
-                    </div>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Database type</span>
+                    <span className="font-medium">{configuration.databaseType}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Database</span>
+                    <span className="font-medium">{configuration.databaseName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Connection</span>
+                    <span className="font-medium">{configuration.connectionName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Finished</span>
+                    <span className="font-medium">{new Date(result.timestamp).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Operation id</span>
+                    <span className="truncate font-mono text-xs">{result.id}</span>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="files" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">File Processing Results</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-64">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>File Name</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Sheets</TableHead>
-                          <TableHead>Records</TableHead>
-                          <TableHead>Success Rate</TableHead>
-                          <TableHead>Time</TableHead>
+            <TabsContent value="files" className="mt-4 space-y-4">
+              {details.fileResults.length === 0 ? (
+                <EmptyState
+                  title="No file results recorded"
+                  description="This run recorded no per-file detail. The Tables and Logs tabs hold the outcome of each sheet."
+                />
+              ) : (
+                <TableShell className="h-72">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>File</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Sheets</TableHead>
+                        <TableHead>Records</TableHead>
+                        <TableHead>Duration</TableHead>
+                        <TableHead>Errors</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {details.fileResults.map((file, index) => (
+                        <TableRow key={index}>
+                          <TableCell className="font-medium">{file.fileName}</TableCell>
+                          <TableCell>
+                            <Badge variant={STATUS_BADGE[file.status]}>{file.status}</Badge>
+                          </TableCell>
+                          <TableCell>{file.sheetsProcessed}</TableCell>
+                          <TableCell>{file.recordsProcessed.toLocaleString()}</TableCell>
+                          <TableCell>{(file.processingTimeMs / 1000).toFixed(2)}s</TableCell>
+                          <TableCell className="max-w-72 whitespace-normal text-sm">
+                            {file.errors.length > 0 ? file.errors.join(" ") : "None"}
+                          </TableCell>
                         </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {operationResult.details.fileResults.map((file, index) => (
-                          <TableRow key={index}>
-                            <TableCell className="font-medium">{file.fileName}</TableCell>
-                            <TableCell>
-                              <Badge variant={file.status === "success" ? "default" : "secondary"}>{file.status}</Badge>
-                            </TableCell>
-                            <TableCell>{file.sheetsProcessed}</TableCell>
-                            <TableCell>{file.recordsProcessed.toLocaleString()}</TableCell>
-                            <TableCell>
-                              {file.recordsProcessed > 0
-                                ? `${((file.recordsSuccessful / file.recordsProcessed) * 100).toFixed(1)}%`
-                                : "N/A"}
-                            </TableCell>
-                            <TableCell>{(file.processingTimeMs / 1000).toFixed(2)}s</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableShell>
+              )}
             </TabsContent>
 
-            <TabsContent value="tables" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Table Import Results</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-64">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Table Name</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Inserted</TableHead>
-                          <TableHead>Updated</TableHead>
-                          <TableHead>Failed</TableHead>
-                          <TableHead>Time</TableHead>
+            <TabsContent value="tables" className="mt-4 space-y-4">
+              {details.tableResults.length === 0 ? (
+                <EmptyState
+                  title="No tables were written"
+                  description="Nothing reached the database in this run. Fix the reported problems, then create the tables again."
+                />
+              ) : (
+                <TableShell className="h-72">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Table</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Inserted</TableHead>
+                        <TableHead>Failed</TableHead>
+                        <TableHead>Duration</TableHead>
+                        <TableHead>Errors</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {details.tableResults.map((table, index) => (
+                        <TableRow key={index}>
+                          <TableCell className="font-mono text-sm font-medium">{table.tableName}</TableCell>
+                          <TableCell>
+                            <Badge variant={STATUS_BADGE[table.status]}>{table.status}</Badge>
+                          </TableCell>
+                          <TableCell>{table.recordsInserted.toLocaleString()}</TableCell>
+                          <TableCell>{table.recordsFailed.toLocaleString()}</TableCell>
+                          <TableCell>{(table.executionTimeMs / 1000).toFixed(2)}s</TableCell>
+                          <TableCell className="max-w-72 whitespace-normal text-sm">
+                            {table.errors.length > 0 ? table.errors.join(" ") : "None"}
+                          </TableCell>
                         </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {operationResult.details.tableResults.map((table, index) => (
-                          <TableRow key={index}>
-                            <TableCell className="font-medium">{table.tableName}</TableCell>
-                            <TableCell>
-                              <Badge variant={table.status === "success" ? "default" : "secondary"}>
-                                {table.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-green-600">{table.recordsInserted.toLocaleString()}</TableCell>
-                            <TableCell className="text-blue-600">{table.recordsUpdated.toLocaleString()}</TableCell>
-                            <TableCell className="text-red-600">{table.recordsFailed.toLocaleString()}</TableCell>
-                            <TableCell>{(table.executionTimeMs / 1000).toFixed(2)}s</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableShell>
+              )}
             </TabsContent>
 
-            <TabsContent value="logs" className="space-y-4">
-              {/* Warnings */}
-              {operationResult.details.warnings.length > 0 && (
-                <Alert>
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>
-                    <div className="space-y-1">
-                      <p className="font-medium">Warnings ({operationResult.details.warnings.length}):</p>
-                      <ul className="list-disc list-inside space-y-1">
-                        {operationResult.details.warnings.map((warning, index) => (
-                          <li key={index} className="text-sm">
-                            {warning}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              )}
+            <TabsContent value="logs" className="mt-4 space-y-4">
+              {warnings.length > 0 ? (
+                <StatusAlert tone="warning">
+                  <p className="font-medium">{warnings.length} warnings recorded</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {warnings.map((warning, index) => (
+                      <li key={index}>{warning}</li>
+                    ))}
+                  </ul>
+                </StatusAlert>
+              ) : null}
 
-              {/* Errors */}
-              {operationResult.details.errors.length > 0 && (
-                <Alert variant="destructive">
-                  <XCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    <div className="space-y-1">
-                      <p className="font-medium">Errors ({operationResult.details.errors.length}):</p>
-                      <ul className="list-disc list-inside space-y-1">
-                        {operationResult.details.errors.map((error, index) => (
-                          <li key={index} className="text-sm">
-                            {error}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              )}
+              {problems.length > 0 ? (
+                <StatusAlert tone="error">
+                  <p className="font-medium">{problems.length} errors recorded</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {problems.map((problem, index) => (
+                      <li key={index}>
+                        <span className="font-mono text-xs">{problem.source}</span> — {problem.message}
+                      </li>
+                    ))}
+                  </ul>
+                </StatusAlert>
+              ) : null}
 
-              {/* Success Message */}
-              {operationResult.details.warnings.length === 0 && operationResult.details.errors.length === 0 && (
-                <Alert>
-                  <CheckCircle className="h-4 w-4" />
-                  <AlertDescription>Operation completed successfully with no warnings or errors.</AlertDescription>
-                </Alert>
-              )}
-
-              {/* Detailed Logs */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Execution Log</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-48">
-                    <div className="space-y-2 font-mono text-sm">
-                      <div className="text-muted-foreground">
-                        [{operationResult.timestamp.toLocaleTimeString()}] Operation started
-                      </div>
-                      <div className="text-muted-foreground">
-                        [{operationResult.timestamp.toLocaleTimeString()}] Processing{" "}
-                        {operationResult.summary.filesProcessed} files
-                      </div>
-                      <div className="text-muted-foreground">
-                        [{operationResult.timestamp.toLocaleTimeString()}] Analyzing{" "}
-                        {operationResult.summary.sheetsProcessed} sheets
-                      </div>
-                      <div className="text-muted-foreground">
-                        [{operationResult.timestamp.toLocaleTimeString()}] Generated{" "}
-                        {operationResult.details.sqlStatements} SQL statements
-                      </div>
-                      <div className="text-green-600">
-                        [{operationResult.timestamp.toLocaleTimeString()}] Successfully processed{" "}
-                        {operationResult.summary.recordsSuccessful.toLocaleString()} records
-                      </div>
-                      {operationResult.summary.recordsFailed > 0 && (
-                        <div className="text-yellow-600">
-                          [{operationResult.timestamp.toLocaleTimeString()}]{" "}
-                          {operationResult.summary.recordsFailed.toLocaleString()} records failed validation
-                        </div>
-                      )}
-                      <div className="text-muted-foreground">
-                        [
-                        {new Date(
-                          operationResult.timestamp.getTime() + operationResult.summary.executionTimeMs,
-                        ).toLocaleTimeString()}
-                        ] Operation completed in {metrics.duration}s
-                      </div>
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
+              {warnings.length === 0 && problems.length === 0 ? (
+                <EmptyState
+                  title="No warnings or errors recorded"
+                  description="Nothing was reported while this run executed. Anything the database complained about would be listed here."
+                />
+              ) : null}
             </TabsContent>
           </Tabs>
         </CardContent>

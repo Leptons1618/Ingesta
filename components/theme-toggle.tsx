@@ -5,7 +5,7 @@ import { MoonStar, SunMedium } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
-import { useAppSettingsStore } from "@/lib/app-settings-store"
+import { useAppSettingsStore } from "@/lib/settings"
 
 export function ThemeToggle() {
   const { resolvedTheme } = useTheme()

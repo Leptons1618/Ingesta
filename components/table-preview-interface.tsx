@@ -1,105 +1,83 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useCallback, useEffect, useState } from "react"
+import { ArrowLeft, ArrowRight, CheckCircle2, Database, Eye } from "lucide-react"
+
+import { ChipButton, DataTable, EmptyState, LoadingCard, StatusAlert } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ArrowLeft, ArrowRight, CheckCircle, Database, Eye, Loader2 } from "lucide-react"
-import { type DatabaseConfig } from "@/lib/database-manager"
+import { postJson } from "@/lib/api"
+import type { DatabaseConfig } from "@/lib/types"
 
-interface CreatedTable {
+interface TablePreview {
   tableName: string
-  totalRows: number
   columns: string[]
-  sampleData: any[][]
+  sampleData: unknown[][]
+  totalRows: number
 }
 
 interface TablePreviewInterfaceProps {
   databaseConfig: DatabaseConfig
-  createdTables: Array<{ tableName: string; rowCount: number }>
+  tables: Array<{ tableName: string; rowCount: number }>
   onBack: () => void
-  onContinue?: () => void
-  showContinue?: boolean
+  onContinue: () => void
 }
 
-export function TablePreviewInterface({
-  databaseConfig,
-  createdTables,
-  onBack,
-  onContinue,
-  showContinue = false,
-}: TablePreviewInterfaceProps) {
+export function TablePreviewInterface({ databaseConfig, tables, onBack, onContinue }: TablePreviewInterfaceProps) {
   const [selectedTableIndex, setSelectedTableIndex] = useState(0)
-  const [tableData, setTableData] = useState<CreatedTable | null>(null)
+  const [preview, setPreview] = useState<TablePreview | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const currentTable = createdTables?.[selectedTableIndex]
+  const currentTable = tables[selectedTableIndex]
+  const tableName = currentTable?.tableName
+
+  const fetchTableData = useCallback(
+    async (name: string) => {
+      setIsLoading(true)
+      setError(null)
+
+      const response = await postJson<{ columns: string[]; data: unknown[][]; totalRows: number }>(
+        "/api/preview-table",
+        { config: databaseConfig, tableName: name, limit: 10 },
+      )
+
+      if (!response.ok) {
+        setPreview(null)
+        setError(response.error)
+      } else {
+        setPreview({
+          tableName: name,
+          columns: response.data.columns,
+          sampleData: response.data.data,
+          totalRows: response.data.totalRows,
+        })
+      }
+
+      setIsLoading(false)
+    },
+    [databaseConfig],
+  )
 
   useEffect(() => {
-    if (currentTable) {
-      fetchTableData(currentTable.tableName)
-    }
-  }, [selectedTableIndex, currentTable])
+    if (!tableName) return
+    void fetchTableData(tableName)
+  }, [tableName, fetchTableData])
 
-  const fetchTableData = async (tableName: string) => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await fetch("/api/database/preview-table", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          config: databaseConfig,
-          tableName,
-          limit: 10,
-        }),
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        setTableData({
-          tableName,
-          totalRows: result.totalRows || result.data?.length || 0,
-          columns: result.columns || [],
-          sampleData: result.data || [],
-        })
-      } else {
-        setError(result.message || "Failed to fetch table data")
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch table data")
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const nextTable = () => {
-    if (selectedTableIndex < createdTables.length - 1) {
-      setSelectedTableIndex(selectedTableIndex + 1)
-    }
-  }
-
-  const prevTable = () => {
-    if (selectedTableIndex > 0) {
-      setSelectedTableIndex(selectedTableIndex - 1)
-    }
-  }
-
-  if (!createdTables || createdTables.length === 0) {
+  if (tables.length === 0) {
     return (
-      <Card className="card-shell">
-        <CardContent className="flex flex-col items-center justify-center py-12">
-          <Loader2 className="mb-3 h-8 w-8 animate-spin text-muted-foreground" />
-          <span className="text-lg font-medium">Loading table previews...</span>
-          <span className="mt-1 text-sm text-muted-foreground">Preparing your newly created tables</span>
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={<Database className="h-12 w-12" />}
+        title="No tables to review"
+        description="This run created no tables. Go back to table creation and retry the sheets that failed."
+        action={
+          <Button variant="outline" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4" />
+            Back to table creation
+          </Button>
+        }
+      />
     )
   }
 
@@ -108,60 +86,58 @@ export function TablePreviewInterface({
       <Card className="card-shell">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl font-semibold">
-            <CheckCircle className="h-5 w-5 text-green-600" />
+            <CheckCircle2 className="h-5 w-5 text-primary" />
             Tables created successfully
           </CardTitle>
-          <CardDescription>
-            Review the imported tables and verify a few rows before finishing the run.
-          </CardDescription>
+          <CardDescription>Review the imported tables and verify a few rows before finishing the run.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex flex-wrap gap-3">
-            {createdTables.map((table, index) => {
-              const isSelected = index === selectedTableIndex
-              return (
-                <button
-                  key={table.tableName}
-                  type="button"
-                  onClick={() => setSelectedTableIndex(index)}
-                  className={`min-w-[180px] cursor-pointer rounded-xl border px-4 py-3 text-left transition-colors ${
-                    isSelected ? "border-primary bg-primary/8" : "bg-card hover:bg-muted/40"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-sm font-semibold">{table.tableName}</p>
-                      <p className="text-xs text-muted-foreground">{table.rowCount.toLocaleString()} rows</p>
-                    </div>
-                    <Database className="h-4 w-4 text-muted-foreground" />
+            {tables.map((table, index) => (
+              <ChipButton
+                key={table.tableName}
+                selected={index === selectedTableIndex}
+                onClick={() => setSelectedTableIndex(index)}
+                className="min-w-[180px] px-4 py-3 text-left"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-sm font-semibold">{table.tableName}</p>
+                    <p className="text-xs text-muted-foreground">{table.rowCount.toLocaleString()} rows</p>
                   </div>
-                </button>
-              )
-            })}
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </ChipButton>
+            ))}
           </div>
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={prevTable} disabled={selectedTableIndex === 0}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedTableIndex(selectedTableIndex - 1)}
+                disabled={selectedTableIndex === 0}
+              >
                 <ArrowLeft className="h-4 w-4" />
                 Previous
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={nextTable}
-                disabled={selectedTableIndex === createdTables.length - 1}
+                onClick={() => setSelectedTableIndex(selectedTableIndex + 1)}
+                disabled={selectedTableIndex === tables.length - 1}
               >
                 Next
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
             <Badge variant="outline">
-              Table {selectedTableIndex + 1} of {createdTables.length}
+              Table {selectedTableIndex + 1} of {tables.length}
             </Badge>
           </div>
 
-          {currentTable && (
+          {currentTable ? (
             <Card className="card-shell bg-muted/15">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg font-semibold">
@@ -169,75 +145,37 @@ export function TablePreviewInterface({
                   Preview: <span className="font-mono">{currentTable.tableName}</span>
                 </CardTitle>
                 <CardDescription>
-                  Showing first 10 rows of {currentTable.rowCount.toLocaleString()} total rows.
+                  Showing {preview?.sampleData.length ?? 0} of{" "}
+                  {(preview?.totalRows ?? currentTable.rowCount).toLocaleString()} rows.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {isLoading && (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                    <span className="ml-2 text-sm text-muted-foreground">Loading table data...</span>
-                  </div>
-                )}
+                {isLoading ? <LoadingCard label="Loading table preview..." hint="Reading the first 10 rows." /> : null}
 
-                {error && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                )}
+                {error ? <StatusAlert tone="error">{error}</StatusAlert> : null}
 
-                {tableData && !isLoading && !error && tableData.columns.length > 0 && (
-                  <div className="table-shell">
-                    <ScrollArea className="h-96 w-full">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            {tableData.columns.map((column) => (
-                              <TableHead key={column} className="whitespace-nowrap font-semibold">
-                                <span className="font-mono">{column}</span>
-                              </TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {tableData.sampleData.map((row, index) => (
-                            <TableRow key={index}>
-                              {Array.isArray(row) &&
-                                row.map((cell, cellIndex) => (
-                                  <TableCell key={cellIndex} className="max-w-56 align-top">
-                                    <span className="line-clamp-2 break-words text-sm">{String(cell ?? "")}</span>
-                                  </TableCell>
-                                ))}
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </ScrollArea>
-                  </div>
-                )}
+                {!isLoading && !error && preview && preview.columns.length > 0 ? (
+                  <DataTable columns={preview.columns} rows={preview.sampleData} mono />
+                ) : null}
 
-                {tableData && !isLoading && !error && tableData.columns.length === 0 && (
-                  <Alert>
-                    <AlertDescription>
-                      No preview data available. The table might be empty or the preview response did not include rows.
-                    </AlertDescription>
-                  </Alert>
-                )}
+                {!isLoading && !error && preview && preview.columns.length === 0 ? (
+                  <StatusAlert tone="info">
+                    This table has no rows to preview. Check the insert step for this sheet, then reload the preview.
+                  </StatusAlert>
+                ) : null}
               </CardContent>
             </Card>
-          )}
+          ) : null}
 
-          <div className="flex justify-between gap-4">
+          <div className="flex items-center justify-between gap-4">
             <Button variant="outline" onClick={onBack}>
               <ArrowLeft className="h-4 w-4" />
-              Back to creation
+              Back to table creation
             </Button>
-            {showContinue && onContinue && (
-              <Button onClick={onContinue}>
-                Finish run
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            )}
+            <Button onClick={onContinue}>
+              Finish run
+              <ArrowRight className="h-4 w-4" />
+            </Button>
           </div>
         </CardContent>
       </Card>
