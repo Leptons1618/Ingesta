@@ -24,6 +24,7 @@ import type {
   SheetInput,
   TableCreationConfig,
 } from "@/lib/types"
+import { formatCellValue } from "@/lib/utils"
 
 interface TableCreationInterfaceProps {
   databaseConfig: DatabaseConfig
@@ -457,7 +458,7 @@ export function TableCreationInterface({
                               variant="secondary"
                               className="max-w-[120px] truncate text-xs font-normal"
                             >
-                              {String(sample)}
+                              {formatCellValue(sample)}
                             </Badge>
                           ))}
                           {column.samples.length > 3 ? (

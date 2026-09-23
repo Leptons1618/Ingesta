@@ -1,14 +1,106 @@
 # Refactor tracker
 
 Working notes for the cleanup that replaced the map-onto-existing-table flow with a single
-"one sheet, one new table" pipeline. Facts only; the reasoning behind the decisions is in
-[ARCHITECTURE.md](ARCHITECTURE.md).
+"one sheet, one new table" pipeline, and for the workspace expansion that followed it. Facts only;
+the reasoning behind the decisions is in [ARCHITECTURE.md](ARCHITECTURE.md) and
+[WORKSPACE.md](WORKSPACE.md).
 
 Paths listed under **Done** as deleted no longer exist — that is what the section records. Every
 path named anywhere else in this tracker, and every path in [README.md](../README.md),
-[ARCHITECTURE.md](ARCHITECTURE.md) and [API.md](API.md), resolves on disk.
+[ARCHITECTURE.md](ARCHITECTURE.md), [WORKSPACE.md](WORKSPACE.md) and [API.md](API.md), resolves on
+disk.
 
-## Done
+## Workspace expansion
+
+The app grew from one page to six. The import wizard moved to `/import` unchanged in behaviour;
+everything else is new.
+
+### New modules
+
+- [x] `lib/expression.ts` — a hand-written tokenizer, recursive-descent parser and tree-walking
+  evaluator. No `eval`, no `new Function`, no reachable global: an expression reads only the columns
+  it is handed and calls only the functions in the `FUNCTIONS` table.
+- [x] `lib/operations.ts` — the data operation engine (13 operation kinds), row validation of seven
+  rule kinds, and the grid↔table conversions (`gridToTableConfig`, `gridToRows`, `gridBytes`).
+  `applyOperation` is pure, which is what makes rollback exact.
+- [x] `lib/guardrails.ts` — every risk judgement in one place, including SQL classification that
+  strips comments and string literals before deciding, so `SELECT 1; DROP TABLE t` is refused.
+- [x] `lib/workspace.ts` — the IndexedDB dataset store and the retention policy.
+- [x] `lib/export.ts` — CSV, JSON and .xlsx out; workbooks back in via the existing parser.
+- [x] `lib/push.ts` — the one path from a browser grid into a database table.
+- [x] `lib/toast.ts` — the toast store.
+
+### New pages and components
+
+- [x] `/` dashboard, `/connections` (profiles plus a database explorer), `/data` (datasets),
+  `/tables` (Table Studio), and `/settings` extended with guardrails and retention.
+- [x] `components/app-shell.tsx` with a collapsible sidebar, a mobile drawer, a `⌘K` command palette
+  and animated route transitions. `components/common/nav-items.ts` is the single nav list.
+- [x] `components/common/data-grid.tsx` — a virtualized, editable grid: 5,000 rows render 19 DOM
+  rows, with a sticky header, drag-to-resize columns, inline editing, row selection and
+  flagged-cell highlighting.
+- [x] `components/common/confirm-dialog.tsx` — the guardrail gate. A destructive assessment always
+  carries a `confirmation` phrase and the confirm button stays disabled until it is typed.
+- [x] New Radix wrappers: `dialog`, `alert-dialog`, `dropdown-menu`, `tooltip`, `separator`,
+  `popover`, `toast`.
+
+### New database operations
+
+- [x] `getTableStructure`, `alterTable`, `dropTable`, `truncateTable`, `mutateRows`, `runQuery`,
+  `createSnapshot`, `listSnapshots`, `restoreSnapshot`, `dropSnapshot`, `copyTable`, `dropDatabase`
+  — each written once in `lib/db/index.ts` against the `Dialect` interface.
+- [x] `previewTable` gained `offset`, `orderBy` and `direction`; it still accepts a bare number as
+  `{ limit }`, so existing callers kept compiling.
+- [x] Eight new routes, taking the total from 7 to 15. See [API.md](API.md).
+- [x] `Dialect` gained `createTableAsSql` (MSSQL has no CTAS), `insertFromSelectSql`, `pageSql`,
+  `limitSql`, `addColumnSql`, `dropColumnSql`, `renameColumnSql`, `changeTypeSql`, `renameTableSql`
+  and `registrySql`. `changeTypeSql` returns `null` for SQLite, which has no `ALTER COLUMN`, and the
+  rebuild path in `lib/db/index.ts` handles that case.
+
+### Correctness fixed during the expansion
+
+- [x] **`analyzeColumn` stringified its samples.** `distinct` was built with
+  `present.map((value) => String(value))`, so a DATE column's samples became
+  `Mon Jan 15 2024 05:30:00 GMT+0530 (India Standard Time)` and every consumer depended on a
+  localised string. Samples now deduplicate on the text form but keep the original value, and
+  `check-pipeline.ts` asserts a Date sample is still a `Date`.
+- [x] **`coerceCell` let fractions reach integer columns.** `Number(value)` was applied to every
+  numeric type, so casting `12.5` to `INT` produced `12.5`. Integer types now truncate toward zero,
+  matching `CAST(x AS INT)`; PostgreSQL would have rejected the value and SQLite would have stored a
+  REAL in an INTEGER-affinity column.
+- [x] **`useCountUp` could display the wrong number.** The stat-card count-up was driven only by
+  `requestAnimationFrame`, which does not fire in a hidden or backgrounded tab, so a card could sit
+  at `0` indefinitely instead of the real figure. A settle timeout now guarantees the exact value.
+- [x] **`PRAGMA` was classified as a write.** `READ_ONLY_VERBS` had no `pragma` entry, so even
+  `PRAGMA table_info('t')` failed the read-only test. Read-only pragmas are now an explicit
+  allowlist, because `PRAGMA journal_mode = WAL` does write to the file.
+- [x] **One cell formatter.** `formatCellValue` in `lib/utils.ts` is now the only place that decides
+  how a stored value reads on screen, so a date cannot render as `YYYY-MM-DD` in one panel and
+  `Date.toString()` in another.
+
+### Verified in a browser against a real SQLite file
+
+- [x] Dashboard renders workspace totals, recent runs and empty states; the shell's nav, sidebar
+  collapse and `⌘K` palette work.
+- [x] Connections: profile test reported `SQLite 3.44.2` and the table count; the Tables tab listed
+  `customers` (12 rows), `nopk` (2 rows) and `orders` (450 rows) with correct column counts.
+- [x] Table browser: paging footer read `page 1 of 3 · showing rows 1–200`; a header sort produced a
+  server-side `ORDER BY` (descending put `order_id 450` first) and reset to page 1.
+- [x] Query console: `DROP TABLE orders` was classified destructive with write access off and the run
+  button disabled; a `SELECT` returned `5 rows · 0 ms`.
+- [x] Datasets: importing a two-sheet workbook created two datasets; a filter showed
+  `5 → 2 rows · 6 → 6 columns · 0 cells change` before it was applied; History showed the measured
+  effect; Undo restored 5 rows and reset the operation count to 0.
+- [x] Table Studio: pulling `orders` paged 450 rows; editing a cell recorded
+  `Update order_id 1 · amount → 999.5` as pending; applying it through the guardrail dialog cleared
+  the plan, and reading the database file back showed `amount = 999.5`.
+- [x] Import wizard end to end: two sheets analysed, one selected, the table renamed to
+  `orders_import`, created and inserted, verified in the preview, and the run summary reported
+  `5 records`, `1 of 1 sheets`, `1 table affected`. The database file was read back: dates stored as
+  `2024-01-15`, booleans as `1`/`0`, the duplicate `customer` header suffixed to `customer_2`, and
+  NULLs preserved.
+
+### Earlier cleanup
 
 ### Dead route trees removed
 
@@ -164,15 +256,32 @@ Each of these is a deliberate ceiling with a known upgrade path.
 - **The whole sheet is held in browser memory and posted as one JSON body.** Large sheets mean a
   large string in the browser and a large request body. Upgrade: chunk the rows across several
   insert calls, or parse the file server-side and stream.
+- **A dataset is held in memory while it is open.** `Workspace` stores datasets in IndexedDB and
+  lists them without reading rows, but selecting one loads the whole grid, and every operation
+  replays over it. The `maxRowsPerDataset` retention limit is what keeps this bounded.
+- **Row editing in the Table Studio requires a primary key.** Without one, the studio disables cell
+  editing, row deletion and "Add row", and says why. Matching rows on every column instead was
+  rejected: a duplicate row would then be silently uneditable or silently overwritten.
+- **`_ingesta_` is a reserved table-name prefix.** `listTables` hides those tables so snapshots do
+  not appear as user tables. A database that already uses that prefix for its own tables would hide
+  them too.
+- **Snapshots live inside the database they protect.** Dropping the database takes its snapshots
+  with it. That is why `assessDropDatabase` says so explicitly.
 - **No resume or retry per table.** A failed sheet is retried by running the workflow again; there
   is no persisted queue of pending tables. Upgrade: persist the per-run queue and retry only the
   `FailedTable` entries.
-- **`previewTable` returns the first N rows with no ordering guarantee.** The engine decides the
-  order, so the sample is arbitrary. `totalRows` is an exact `COUNT(*)`, separate from the sample.
+- **`previewTable` orders only when asked.** Without `orderBy` the engine decides the order, so the
+  sample is arbitrary. `totalRows` is an exact `COUNT(*)`, separate from the sample.
+- **The expression language is not SQL.** It is deliberately smaller and safer than SQL — no
+  subqueries, no joins, no aggregates over the whole column. It exists so a filter can run in the
+  browser over data that has not reached a database yet.
 - **Connections and run history live in `localStorage`.** Passwords are stored in plain text in the
-  browser and sent to the server with each request; history keeps the last 20 runs.
+  browser and sent to the server with each request. Exporting profiles includes them by default,
+  behind an explicit warning; there is no encryption.
 - **No authentication.** Anyone who can reach the app can use any saved connection, and the server
   process is the one opening database connections.
+- **Only SQLite is exercised against a live server.** PostgreSQL, MySQL and SQL Server are asserted
+  at the SQL, DDL and type-mapping level by the check scripts; their drivers are never run here.
 
 ## Backlog
 
@@ -184,6 +293,8 @@ Only work that follows from the limitations above.
   list.
 - [ ] Chunk large sheets instead of holding them in memory and posting one body.
 - [ ] Per-table retry for `FailedTable` entries, driven by a persisted run record.
-- [ ] Add explicit ordering (or a documented default) to `previewTable`.
 - [ ] Move connection secrets out of plain-text `localStorage` if the app is ever exposed beyond a
   trusted machine.
+- [ ] Window dataset operations so a dataset larger than the retention limit can still be cleaned.
+- [ ] Run the PostgreSQL, MySQL and SQL Server paths against live servers, especially the SQLite
+  column-type rebuild's counterparts and the snapshot CTAS on SQL Server.

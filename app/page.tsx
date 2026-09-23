@@ -1,320 +1,265 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { FileSpreadsheet, Loader2, RefreshCw, Settings } from "lucide-react"
+import {
+  ArrowRight,
+  Database,
+  FileSpreadsheet,
+  Loader2,
+  Table2,
+  TrendingUp,
+  Upload,
+  Waypoints,
+} from "lucide-react"
 
-import { DatabaseConnectionForm } from "@/components/database-connection-form"
-import { DatabaseConnectionList } from "@/components/database-connection-list"
-import { ExcelPreview } from "@/components/excel-preview"
-import { FileUploadZone } from "@/components/file-upload-zone"
-import { ResultsDashboard } from "@/components/results-dashboard"
-import { SheetSelectionInterface } from "@/components/sheet-selection-interface"
-import { TableCreationInterface } from "@/components/table-creation-interface"
-import { TablePreviewInterface } from "@/components/table-preview-interface"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { PageHeader, StatCard, StatGrid, StatusAlert } from "@/components/common"
+import { EmptyState, MiniBars, PageHeader, Section, StatCard, StatGrid, StatusAlert } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { WORKFLOW_STAGES, WorkflowStepper } from "@/components/workflow-stepper"
-import { parseWorkbooks } from "@/lib/excel"
-import { buildRunResult, ConnectionStorage, RunHistory } from "@/lib/storage"
-import type {
-  CreatedTable,
-  DatabaseConfig,
-  DatabaseTable,
-  FailedTable,
-  OperationResult,
-  ParsedWorkbook,
-  SheetInput,
-} from "@/lib/types"
-import { formatBytes } from "@/lib/utils"
+import { ConnectionStorage, RunHistory } from "@/lib/storage"
+import type { DatasetSummary, OperationResult } from "@/lib/types"
+import { formatBytes, formatRelativeTime } from "@/lib/utils"
+import { Workspace } from "@/lib/workspace"
 
-export default function HomePage() {
-  const [step, setStep] = useState(1)
-  const [files, setFiles] = useState<File[]>([])
-  const [workbook, setWorkbook] = useState<ParsedWorkbook | null>(null)
-  const [connections, setConnections] = useState<DatabaseConfig[]>([])
-  const [connection, setConnection] = useState<DatabaseConfig | null>(null)
-  const [databaseTables, setDatabaseTables] = useState<DatabaseTable[]>([])
-  const [queue, setQueue] = useState<SheetInput[]>([])
-  const [created, setCreated] = useState<CreatedTable[]>([])
-  const [failed, setFailed] = useState<FailedTable[]>([])
-  const [result, setResult] = useState<OperationResult | null>(null)
-  const [importDurationMs, setImportDurationMs] = useState(0)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
+const STATUS_TONE = {
+  success: "text-emerald-600 dark:text-emerald-400",
+  partial: "text-amber-600 dark:text-amber-400",
+  failed: "text-destructive",
+} as const
+
+/** One entry point, so the empty state and the header actions cannot drift. */
+const QUICK_ACTIONS = [
+  { href: "/import", label: "Import workbooks", description: "Excel to new database tables", icon: Upload },
+  { href: "/connections", label: "Manage connections", description: "Saved servers and their schemas", icon: Database },
+  { href: "/data", label: "Explore data", description: "Clean, validate and reshape a dataset", icon: Table2 },
+  { href: "/tables", label: "Table studio", description: "Edit a live table and sync it back", icon: Waypoints },
+] as const
+
+export default function DashboardPage() {
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([])
+  const [runs, setRuns] = useState<OperationResult[]>([])
+  const [connectionCount, setConnectionCount] = useState(0)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Saved connections live in localStorage, so they can only be read on the client.
-  useEffect(() => {
-    setConnections(ConnectionStorage.getAll())
-  }, [])
-
-  const analyze = useCallback(async () => {
-    if (files.length === 0) return
-
-    setIsAnalyzing(true)
+  const load = useCallback(async () => {
+    setLoading(true)
     setError(null)
-
-    const parsed = await parseWorkbooks(files)
-    setWorkbook(parsed)
-    setIsAnalyzing(false)
-
-    if (parsed.files.length === 0) {
-      setError(parsed.errors.join(" ") || "None of the selected files contained a readable sheet")
-      return
+    try {
+      // Connections and runs are synchronous localStorage reads; datasets are
+      // an async IndexedDB read.
+      setDatasets(await Workspace.list())
+      setRuns(RunHistory.getAll())
+      setConnectionCount(ConnectionStorage.getAll().length)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setLoading(false)
     }
-
-    setError(parsed.errors.length > 0 ? parsed.errors.join(" ") : null)
-    setStep(2)
-  }, [files])
-
-  const reset = useCallback(() => {
-    setStep(1)
-    setFiles([])
-    setWorkbook(null)
-    setConnection(null)
-    setDatabaseTables([])
-    setQueue([])
-    setCreated([])
-    setFailed([])
-    setResult(null)
-    setImportDurationMs(0)
-    setError(null)
   }, [])
 
-  const selectConnection = useCallback((config: DatabaseConfig, tables: DatabaseTable[]) => {
-    setConnection(config)
-    setDatabaseTables(tables)
-    setQueue([])
-    setCreated([])
-    setFailed([])
-    setResult(null)
-    setStep(4)
-  }, [])
+  useEffect(() => {
+    void load()
+  }, [load])
 
-  const selectSheets = useCallback((sheets: SheetInput[]) => {
-    setQueue(sheets)
-    setCreated([])
-    setFailed([])
-    setError(null)
-    setStep(5)
-  }, [])
-
-  const finishCreation = useCallback(
-    ({
-      created: createdTables,
-      failed: failedTables,
-      elapsedMs,
-    }: {
-      created: CreatedTable[]
-      failed: FailedTable[]
-      elapsedMs: number
-    }) => {
-      setCreated(createdTables)
-      setFailed(failedTables)
-      setImportDurationMs(elapsedMs)
-
-      if (createdTables.length === 0) {
-        setError("No tables were created. Fix the reported problems and try again.")
-        return
-      }
-
-      setStep(6)
-    },
-    [],
-  )
-
-  const finishRun = useCallback(() => {
-    if (!connection) return
-
-    const run = buildRunResult({
-      createdTables: created,
-      failedTables: failed,
-      durationMs: importDurationMs,
-      config: connection,
-    })
-
-    RunHistory.record(run)
-    setResult(run)
-    setStep(7)
-  }, [connection, created, failed, importDurationMs])
-
-  const stats = useMemo(
-    () => [
-      { label: "Files", value: files.length },
-      { label: "Sheets", value: workbook?.files.reduce((total, file) => total + file.sheets.length, 0) ?? 0 },
-      { label: "Rows", value: workbook?.files.reduce((total, file) => total + file.sheets.reduce((rows, sheet) => rows + sheet.data.length, 0), 0) ?? 0 },
-      { label: "Tables", value: created.length },
-    ],
-    [created.length, files.length, workbook],
-  )
-
-  const stage = WORKFLOW_STAGES[step - 1]
+  const totalRowsImported = runs.reduce((total, run) => total + run.summary.recordsProcessed, 0)
+  const totalTables = runs.reduce((total, run) => total + run.summary.tablesAffected, 0)
+  const storedRows = datasets.reduce((total, dataset) => total + dataset.rowCount, 0)
+  const storedBytes = datasets.reduce((total, dataset) => total + dataset.bytes, 0)
+  const timeline = RunHistory.dailyCounts(14)
+  const isEmpty = datasets.length === 0 && runs.length === 0 && connectionCount === 0
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="text-foreground">
       <PageHeader
-        title="Ingesta"
-        description="Excel to database import workflow"
+        title="Dashboard"
+        description="Everything this workspace is holding, and where to go next."
         badge={<Badge variant="outline">Beta</Badge>}
         actions={
-          <>
-            {connection ? <Badge variant="outline">{connection.name}</Badge> : null}
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/settings">
-                <Settings className="h-4 w-4" />
-                Settings
-              </Link>
-            </Button>
-            {step > 1 && step < 7 ? (
-              <Button variant="outline" size="sm" onClick={reset}>
-                <RefreshCw className="h-4 w-4" />
-                Reset
-              </Button>
-            ) : null}
-            <ThemeToggle />
-          </>
+          <Button asChild>
+            <Link href="/import">
+              <Upload className="h-4 w-4" />
+              New import
+            </Link>
+          </Button>
         }
       />
 
-      <main className="mx-auto w-full max-w-5xl px-6 py-8">
-        {step < 7 ? (
-          <div className="mb-8 space-y-4">
-            <div>
-              <h2 className="text-2xl font-semibold tracking-tight">{stage.title}</h2>
-              <p className="text-sm text-muted-foreground">{stage.description}</p>
-            </div>
+      <main className="w-full space-y-8 px-6 py-8">
+        {error ? <StatusAlert tone="error">{error}</StatusAlert> : null}
 
-            <WorkflowStepper current={step} />
-
-            <StatGrid>
-              {stats.map((stat) => (
-                <StatCard key={stat.label} label={stat.label} value={stat.value.toLocaleString()} />
-              ))}
-            </StatGrid>
-          </div>
-        ) : null}
-
-        {error && step < 7 ? (
-          <StatusAlert tone="error" className="mb-6">
-            {error}
-          </StatusAlert>
-        ) : null}
-
-        {step === 1 ? (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
-            <Card className="card-shell">
-              <CardHeader>
-                <CardTitle>Upload files</CardTitle>
-                <CardDescription>Drag and drop Excel files or browse from disk.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <FileUploadZone onFileUpload={setFiles} />
-
-                {files.length > 0 ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium">Selected files</p>
-                      <Badge variant="outline">
-                        {formatBytes(files.reduce((total, file) => total + file.size, 0))}
-                      </Badge>
-                    </div>
-                    <div className="space-y-2">
-                      {files.map((file) => (
-                        <div
-                          key={`${file.name}-${file.size}`}
-                          className="flex items-center justify-between rounded-xl border bg-muted/25 p-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">{file.name}</p>
-                            <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
-                          </div>
-                          <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card className="card-shell">
-              <CardHeader>
-                <CardTitle>Next</CardTitle>
-                <CardDescription>Read the workbooks to list their sheets, rows, and columns.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button className="w-full" onClick={analyze} disabled={isAnalyzing || files.length === 0}>
-                  {isAnalyzing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Analyzing
-                    </>
-                  ) : (
-                    <>
-                      Analyze files
-                      <FileSpreadsheet className="h-4 w-4" />
-                    </>
-                  )}
+        {isEmpty && !loading ? (
+          <EmptyState
+            title="Nothing here yet"
+            description="Save a database connection and import a workbook — the workspace fills up from there."
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button asChild>
+                  <Link href="/import">
+                    <Upload className="h-4 w-4" />
+                    Import workbooks
+                  </Link>
                 </Button>
-              </CardContent>
-            </Card>
-          </div>
-        ) : null}
-
-        {step === 2 && workbook ? (
-          <ExcelPreview files={workbook.files} onProceed={() => setStep(3)} />
-        ) : null}
-
-        {step === 3 ? (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <DatabaseConnectionForm onSaved={setConnections} />
-            <DatabaseConnectionList
-              connections={connections}
-              onRemoved={setConnections}
-              onSelected={selectConnection}
-            />
-          </div>
-        ) : null}
-
-        {step === 4 && workbook && connection ? (
-          <SheetSelectionInterface
-            files={workbook.files}
-            databaseConfig={connection}
-            onProceed={selectSheets}
+                <Button variant="outline" asChild>
+                  <Link href="/connections">
+                    <Database className="h-4 w-4" />
+                    Add a connection
+                  </Link>
+                </Button>
+              </div>
+            }
           />
         ) : null}
 
-        {step === 5 && connection ? (
-          <TableCreationInterface
-            databaseConfig={connection}
-            sheets={queue}
-            onComplete={finishCreation}
-            onCancel={() => setStep(4)}
+        <StatGrid>
+          <StatCard
+            label="Connections"
+            value={loading ? "—" : connectionCount.toLocaleString()}
+            icon={<Database className="h-4 w-4" />}
+            hint="Saved profiles in this browser"
           />
-        ) : null}
+          <StatCard
+            label="Datasets"
+            value={loading ? "—" : datasets.length.toLocaleString()}
+            icon={<Table2 className="h-4 w-4" />}
+            hint={datasets.length > 0 ? `${storedRows.toLocaleString()} rows · ${formatBytes(storedBytes)}` : "Stored in IndexedDB"}
+          />
+          <StatCard
+            label="Tables imported"
+            value={loading ? "—" : totalTables.toLocaleString()}
+            icon={<TrendingUp className="h-4 w-4" />}
+            hint={`Across ${runs.length} run${runs.length === 1 ? "" : "s"}`}
+          />
+          <StatCard
+            label="Rows imported"
+            value={loading ? "—" : totalRowsImported.toLocaleString()}
+            icon={<FileSpreadsheet className="h-4 w-4" />}
+            hint="Counted from completed runs"
+          />
+        </StatGrid>
 
-        {step === 6 && connection ? (
-          <>
-            {failed.length > 0 ? (
-              <StatusAlert tone="warning" className="mb-6">
-                {failed.length} of {failed.length + created.length} tables could not be created.{" "}
-                {failed.map((table) => `${table.tableName}: ${table.message}`).join(" · ")}
-              </StatusAlert>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {QUICK_ACTIONS.map((action) => {
+            const Icon = action.icon
+            return (
+              <Link
+                key={action.href}
+                href={action.href}
+                className="group flex items-center gap-3 rounded-2xl border bg-card p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                  <Icon className="h-5 w-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{action.label}</span>
+                  <span className="block truncate text-sm text-muted-foreground">{action.description}</span>
+                </span>
+                <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+              </Link>
+            )
+          })}
+        </section>
+
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Section
+            title="Recent runs"
+            description="Completed imports, newest first."
+            actions={
+              runs.length > 0 ? (
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/import">Import again</Link>
+                </Button>
+              ) : null
+            }
+          >
+            {loading ? (
+              <LoadingRow />
+            ) : runs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No runs recorded yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {runs.slice(0, 6).map((run) => (
+                  <div key={run.id} className="flex items-center justify-between gap-4 rounded-xl border bg-muted/20 p-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {run.configuration.connectionName} · {run.configuration.databaseName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {run.summary.tablesAffected} table{run.summary.tablesAffected === 1 ? "" : "s"} ·{" "}
+                        {run.summary.recordsProcessed.toLocaleString()} rows · {formatRelativeTime(run.timestamp)}
+                      </p>
+                    </div>
+                    <span className={`shrink-0 text-xs font-medium ${STATUS_TONE[run.status]}`}>{run.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {runs.length > 0 ? (
+              <div className="mt-4 border-t pt-4">
+                <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Runs over the last two weeks</p>
+                <MiniBars values={timeline.map((bucket) => bucket.count)} label="Runs per day" />
+              </div>
             ) : null}
-            <TablePreviewInterface
-              databaseConfig={connection}
-              tables={created.map((table) => ({ tableName: table.tableName, rowCount: table.rowCount }))}
-              onBack={() => setStep(5)}
-              onContinue={finishRun}
-            />
-          </>
-        ) : null}
+          </Section>
 
-        {step === 7 && result ? <ResultsDashboard result={result} onStartNew={reset} /> : null}
+          <Section
+            title="Datasets"
+            description="Workbooks parsed into the browser workspace."
+            actions={
+              datasets.length > 0 ? (
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/data">Explore</Link>
+                </Button>
+              ) : null
+            }
+          >
+            {loading ? (
+              <LoadingRow />
+            ) : datasets.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No datasets stored. Import a workbook, or open{" "}
+                <Link href="/data" className="underline">
+                  Data
+                </Link>{" "}
+                to add one.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {datasets.slice(0, 6).map((dataset) => (
+                  <Link
+                    key={dataset.id}
+                    href="/data"
+                    className="flex items-center justify-between gap-4 rounded-xl border bg-muted/20 p-3 transition-colors hover:bg-muted/40"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{dataset.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {dataset.sourceFile} · {dataset.rowCount.toLocaleString()} rows · {dataset.columnCount} columns
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {dataset.operationCount > 0 ? (
+                        <Badge variant="outline">{dataset.operationCount} ops</Badge>
+                      ) : null}
+                      <span className="text-xs text-muted-foreground">{formatRelativeTime(dataset.updatedAt)}</span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Section>
+        </div>
       </main>
+    </div>
+  )
+}
+
+function LoadingRow() {
+  return (
+    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin" />
+      Reading the workspace
     </div>
   )
 }

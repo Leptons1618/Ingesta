@@ -25,20 +25,35 @@ export function formatDateForDatabase(date: Date, columnType = "DATE"): string {
   return /DATETIME|TIMESTAMP/.test(columnType.toUpperCase()) ? `${day} ${instant.toISOString().slice(11, 19)}` : day
 }
 
-/** Coerces one cell to the value the detected column type expects. */
-export function transformCellValue(value: unknown, column: ColumnAnalysis): unknown {
+/**
+ * Integer column types. Word boundaries matter: `POINT` and `BIGSERIAL` must
+ * not be read as `INT`/`SERIAL`, and `INTEGER` must not be read as `INT`.
+ */
+const INTEGER_TYPE = /\b(TINYINT|SMALLINT|MEDIUMINT|BIGINT|SERIAL|BIGSERIAL|INTEGER|INT)\b/
+const DECIMAL_TYPE = /DECIMAL|NUMERIC|REAL|FLOAT|DOUBLE|MONEY/
+
+/**
+ * Coerces one cell to the value a column of `type` expects. Shared by the
+ * import path and by the dataset cast/fill operations, so a value written by
+ * the grid matches a value written by the importer.
+ *
+ * Integer types truncate toward zero, which is what `CAST(x AS INT)` does. A
+ * fractional value must never reach an integer column: PostgreSQL rejects it,
+ * and SQLite would silently store a REAL in an INTEGER-affinity column.
+ */
+export function coerceCell(value: unknown, type: string): unknown {
   if (value === null || value === undefined || value === "") return null
 
-  const type = column.suggestedType.toUpperCase()
+  const upper = type.toUpperCase()
 
-  if (/DATE|TIMESTAMP|DATETIME/.test(type)) {
-    if (value instanceof Date) return formatDateForDatabase(value, type)
-    if (typeof value === "number") return formatDateForDatabase(excelSerialToDate(value), type)
+  if (/DATE|TIMESTAMP|DATETIME/.test(upper)) {
+    if (value instanceof Date) return formatDateForDatabase(value, upper)
+    if (typeof value === "number") return formatDateForDatabase(excelSerialToDate(value), upper)
     const parsed = new Date(String(value))
-    return isNaN(parsed.getTime()) ? null : formatDateForDatabase(parsed, type)
+    return isNaN(parsed.getTime()) ? null : formatDateForDatabase(parsed, upper)
   }
 
-  if (/BOOLEAN|BIT/.test(type)) {
+  if (/BOOLEAN|BIT/.test(upper)) {
     if (typeof value === "boolean") return value
     const text = String(value).toLowerCase()
     if (["true", "yes", "1", "y"].includes(text)) return true
@@ -46,12 +61,22 @@ export function transformCellValue(value: unknown, column: ColumnAnalysis): unkn
     return Boolean(value)
   }
 
-  if (/INT|DECIMAL|NUMERIC|REAL|FLOAT|DOUBLE/.test(type)) {
+  if (INTEGER_TYPE.test(upper)) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null
+  }
+
+  if (DECIMAL_TYPE.test(upper)) {
     const parsed = Number(value)
     return Number.isFinite(parsed) ? parsed : null
   }
 
   return String(value)
+}
+
+/** Coerces one cell to the value the detected column type expects. */
+export function transformCellValue(value: unknown, column: ColumnAnalysis): unknown {
+  return coerceCell(value, column.suggestedType)
 }
 
 export function transformDataRows(data: unknown[][], columns: ColumnAnalysis[]): unknown[][] {

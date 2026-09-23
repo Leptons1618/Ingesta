@@ -4,14 +4,36 @@ How Ingesta is put together, and why it is put together that way.
 
 ## Intent
 
-Ingesta takes a batch of Excel workbooks in and produces **new** database tables. There is exactly
-one import strategy: every selected sheet becomes a new table with an inferred schema, and that
-sheet's rows are inserted into it. Nothing maps a sheet onto an existing table, nothing writes into
-a table the app did not just create, and nothing is persisted on the server between requests.
+Ingesta has two halves.
 
-A run is one-shot. The browser holds the file list, the chosen connection, the selected sheets and
-the run history; the server opens a short-lived database connection per API call, does one job, and
-closes it.
+The **import wizard** takes a batch of Excel workbooks in and produces **new** database tables. There
+is exactly one import strategy: every selected sheet becomes a new table with an inferred schema, and
+that sheet's rows are inserted into it. A run is one-shot — the browser holds the file list, the
+chosen connection, the selected sheets and the run history; the server opens a short-lived database
+connection per API call, does one job, and closes it.
+
+The **workspace** is everything around that. Data is held long enough to be cleaned, checked,
+reshaped and written wherever the user wants, and every change is recorded so it can be taken back.
+That half has its own document — [WORKSPACE.md](WORKSPACE.md) — because its rules (the operation
+engine, the expression language, guardrails, snapshots, retention) are independent of the wizard.
+
+## Pages
+
+`app/layout.tsx` mounts `components/app-shell.tsx`, which owns the sidebar, the mobile drawer, the
+`⌘K` command palette and the route transition. Every page below starts at a `PageHeader` and a
+`<main>`; none of them renders its own navigation.
+
+| Route | Owner | What it does |
+|-------|-------|--------------|
+| `/` | `app/page.tsx` | Dashboard: workspace totals, recent runs, dataset list, quick actions. |
+| `/import` | `app/import/page.tsx` | The seven-stage wizard below. |
+| `/connections` | `app/connections/page.tsx`, `components/connections/*` | Saved profiles, and an explorer with Overview, Tables, Query and Snapshots. |
+| `/data` | `app/data/page.tsx`, `components/data/*` | Datasets: operations, history, validation, export, push to database. |
+| `/tables` | `app/tables/page.tsx`, `components/tables/*` | Table Studio: pull a live table, edit it, review the plan, apply it. |
+| `/settings` | `app/settings/page.tsx` | Appearance, guardrails and retention. |
+
+The nav list lives in `components/common/nav-items.ts` and is the single source of truth for the
+sidebar and the command palette.
 
 ## The seven stages
 
@@ -150,18 +172,30 @@ These are invariants, not preferences. Changing one changes behaviour users depe
    the engine. Adapting in the UI would lose the semantics the value transformer needs — SQLite
    maps `BOOLEAN` to `INTEGER`, and a `yes`/`no` column adapted too early was coerced to `null` and
    rejected by its own `NOT NULL` constraint.
-9. **One import strategy: a sheet can only create a new table.** There is no second code path that
-   writes into a table the app did not just create, and none should be reintroduced.
+9. **The wizard has one import strategy: a sheet can only create a new table.** Writing into an
+   existing table is a separate, explicit path (`pushGrid` in `lib/push.ts`, driven by the Table
+   Studio's "Save as" and the dataset explorer's export panel), where the target table's column
+   names must already match. There is no column-mapping screen and no implicit append.
+10. **A sample keeps the type it was detected from.** `analyzeColumn` deduplicates sample values on
+    their text form but stores the original value, so a DATE column's samples are `Date` objects and
+    a numeric column's are numbers. Stringifying them at detection time made the schema editor show
+    `Mon Jan 15 2024 05:30:00 GMT+0530 (India Standard Time)` next to a column it had just correctly
+    typed as DATE, and made every later consumer depend on a localised string.
+11. **Integer columns receive integers.** `coerceCell` truncates toward zero for integer types, which
+    is what `CAST(x AS INT)` does. A fractional value must never reach an integer column:
+    PostgreSQL rejects it, and SQLite would silently store a REAL in an INTEGER-affinity column.
 
 ## What is deliberately not here
 
-- **No mapping onto existing tables.** A sheet can only create a table. There is no column-mapping
-  screen and no "append to table" mode.
-- **No SQL export or statement preview.** The generated `CREATE TABLE` and `INSERT` text is built
-  and executed server-side; it is not shown or downloadable.
+- **No mapping a sheet onto an existing table's columns.** The wizard only creates tables. Writing
+  into an existing table exists, but only through `pushGrid` (`lib/push.ts`) and the Table Studio,
+  where the column names must already line up — there is still no column-mapping screen.
+- **No SQL export or statement preview.** The generated `CREATE TABLE` and `INSERT` text is built and
+  executed server-side; it is not shown or downloadable. The Table Studio shows what a plan *will do*
+  as a list of changes, not as SQL.
 - **No server-side session storage.** Connections, passwords and run history live in the browser's
-  `localStorage` (`ConnectionStorage`, `RunHistory`). The server holds credentials only for the
-  duration of a single request.
+  `localStorage`; datasets live in IndexedDB. The server holds credentials only for the duration of a
+  single request, and stores nothing between them.
 - **No authentication or multi-user support.** Anyone who can reach the app can use any saved
   connection. It is built for a trusted machine or a trusted network.
 - **No resume, retry queue or scheduling.** A run is one pass; re-running the workflow is the retry.
@@ -169,19 +203,27 @@ These are invariants, not preferences. Changing one changes behaviour users depe
 
 ## Verifying a change
 
-Two runnable checks exercise the real modules — no mocks, no test framework:
+Six runnable checks exercise the real modules — no mocks, no test framework:
 
 ```bash
-bun scripts/check-pipeline.ts   # parse -> detect -> transform -> DDL, all four engines
-bun scripts/check-sqlite.ts     # real SQLite file: create, insert, preview, introspect
+bun scripts/check-pipeline.ts     # parse -> detect -> transform -> DDL, all four engines
+bun scripts/check-workspace.ts    # expressions, operations, rollback, validation, guardrails, export
+bun scripts/check-data.ts         # the /data round trip end to end
+bun scripts/check-table-ops.ts    # real SQLite: structure, paging, alter, mutate, snapshots, query
+bun scripts/check-tables.ts       # the Table Studio plan: ordering, payloads, gates, partial failure
+bun scripts/check-sqlite.ts       # real SQLite file: create, insert, preview, introspect
 ```
 
 `check-pipeline.ts` builds a workbook in memory, runs it through `parseWorkbooks`, `analyzeSheet`,
 `transformDataRows` and `createTableSql`, and asserts the invariants above: a bare number is never a
 date, duplicate headers are suffixed, rows are padded to the header width, sub-second drift rounds
-to the nearest second, and each engine quotes, parameterises and maps types as documented.
-`check-sqlite.ts` drives `lib/db` against a throwaway SQLite file and asserts that NULL survives the
-round trip, that a `NOT NULL` violation rolls the whole batch back, that booleans land as `1`/`0`,
-and that introspection reports keys and nullability correctly.
+to the nearest second, samples keep their detected type, and each engine quotes, parameterises and
+maps types as documented. `check-sqlite.ts` drives `lib/db` against a throwaway SQLite file and
+asserts that NULL survives the round trip, that a `NOT NULL` violation rolls the whole batch back,
+that booleans land as `1`/`0`, and that introspection reports keys and nullability correctly.
 
-Both are wired to `pnpm check`; `pnpm check:types` type-checks the app and the scripts.
+`check-workspace.ts`, `check-data.ts` and `check-tables.ts` cover the workspace half; they are
+described in [WORKSPACE.md](WORKSPACE.md#verifying-a-change). `check-table-ops.ts` covers the
+database operations the explorer and the studio depend on.
+
+All six are wired to `pnpm check`; `pnpm check:types` type-checks the app and the scripts.

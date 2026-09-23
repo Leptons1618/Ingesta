@@ -17,7 +17,11 @@ export function EmptyState({
   return (
     <Card className="card-shell">
       <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-        {icon ? <span className="text-muted-foreground">{icon}</span> : null}
+        {icon ? (
+          <span className="animate-scale-in grid size-10 place-items-center rounded-full bg-muted text-muted-foreground [&_svg]:size-5">
+            {icon}
+          </span>
+        ) : null}
         <div className="space-y-1">
           <p className="font-semibold">{title}</p>
           <p className="mx-auto max-w-md text-sm text-muted-foreground">{description}</p>

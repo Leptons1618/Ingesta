@@ -256,3 +256,171 @@
   padding-left: 1rem;
   padding-right: 1rem;
 }
+
+/* ---------------------------------------------------------------------------
+ * Motion layer
+ *
+ * Additive only: every rule here collapses under `.reduce-motion`, which the
+ * settings provider toggles on <html>. `translate`/`scale` are used instead of
+ * `transform` so these never fight a Tailwind transform utility.
+ * ------------------------------------------------------------------------- */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    translate: 16px 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@layer utilities {
+  .animate-fade-up {
+    animation: fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.24s ease-out both;
+  }
+
+  .animate-scale-in {
+    animation: scale-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-slide-in-right {
+    animation: slide-in-right 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in oklab, var(--foreground) 10%, transparent) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.8s linear infinite;
+  }
+
+  .hover-lift {
+    transition:
+      translate 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 0.2s ease-out;
+  }
+
+  .hover-lift:hover {
+    translate: 0 -2px;
+    box-shadow: 0 10px 26px -14px color-mix(in oklab, var(--foreground) 40%, transparent);
+  }
+
+  /* Pair with any animate-* utility: children arrive a beat apart. */
+  .stagger > * {
+    animation-delay: 0ms;
+  }
+
+  .stagger > *:nth-child(2) {
+    animation-delay: 45ms;
+  }
+
+  .stagger > *:nth-child(3) {
+    animation-delay: 90ms;
+  }
+
+  .stagger > *:nth-child(4) {
+    animation-delay: 135ms;
+  }
+
+  .stagger > *:nth-child(5) {
+    animation-delay: 180ms;
+  }
+
+  .stagger > *:nth-child(6) {
+    animation-delay: 225ms;
+  }
+
+  .stagger > *:nth-child(7) {
+    animation-delay: 270ms;
+  }
+
+  .stagger > *:nth-child(8) {
+    animation-delay: 315ms;
+  }
+
+  .stagger > *:nth-child(9) {
+    animation-delay: 360ms;
+  }
+
+  .stagger > *:nth-child(10) {
+    animation-delay: 405ms;
+  }
+
+  .stagger > *:nth-child(11) {
+    animation-delay: 450ms;
+  }
+
+  .stagger > *:nth-child(12) {
+    animation-delay: 495ms;
+  }
+
+  /* Route change reveal, keyed on the pathname by the app shell. */
+  .page-reveal {
+    animation: fade-up 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .section-reveal {
+    animation: fade-up 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+/* Delays are cleared as well as durations: a delay on a zero-duration
+   animation would leave the element in its `from` state, i.e. invisible. */
+.reduce-motion .stagger > * {
+  animation-delay: 0ms !important;
+}
+
+.reduce-motion .hover-lift:hover {
+  translate: 0 0;
+  box-shadow: none;
+}

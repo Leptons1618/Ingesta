@@ -1,12 +1,15 @@
 import { previewTable } from "@/lib/db"
 import { jsonRoute } from "@/lib/http"
-import type { DatabaseConfig } from "@/lib/types"
+import type { DatabaseConfig, SortDirection } from "@/lib/types"
 
 export async function POST(request: Request) {
-  const { config, tableName, limit } = (await request.json()) as {
+  const { config, tableName, limit, offset, orderBy, direction } = (await request.json()) as {
     config: DatabaseConfig
     tableName: string
     limit?: number
+    offset?: number
+    orderBy?: string
+    direction?: SortDirection
   }
-  return jsonRoute(() => previewTable(config, tableName, limit ?? 10))
+  return jsonRoute(() => previewTable(config, tableName, { limit, offset, orderBy, direction }))
 }

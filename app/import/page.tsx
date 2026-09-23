@@ -1,0 +1,314 @@
+"use client"
+
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { FileSpreadsheet, Loader2, RefreshCw } from "lucide-react"
+
+import { DatabaseConnectionForm } from "@/components/database-connection-form"
+import { DatabaseConnectionList } from "@/components/database-connection-list"
+import { ExcelPreview } from "@/components/excel-preview"
+import { FileUploadZone } from "@/components/file-upload-zone"
+import { ResultsDashboard } from "@/components/results-dashboard"
+import { SheetSelectionInterface } from "@/components/sheet-selection-interface"
+import { TableCreationInterface } from "@/components/table-creation-interface"
+import { TablePreviewInterface } from "@/components/table-preview-interface"
+import { PageHeader, StatCard, StatGrid, StatusAlert } from "@/components/common"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { WORKFLOW_STAGES, WorkflowStepper } from "@/components/workflow-stepper"
+import { parseWorkbooks } from "@/lib/excel"
+import { useAppSettingsStore } from "@/lib/settings"
+import { buildRunResult, ConnectionStorage, RunHistory } from "@/lib/storage"
+import type {
+  CreatedTable,
+  DatabaseConfig,
+  DatabaseTable,
+  FailedTable,
+  OperationResult,
+  ParsedWorkbook,
+  SheetInput,
+} from "@/lib/types"
+import { formatBytes } from "@/lib/utils"
+
+export default function ImportPage() {
+  const [step, setStep] = useState(1)
+  const [files, setFiles] = useState<File[]>([])
+  const [workbook, setWorkbook] = useState<ParsedWorkbook | null>(null)
+  const [connections, setConnections] = useState<DatabaseConfig[]>([])
+  const [connection, setConnection] = useState<DatabaseConfig | null>(null)
+  const [databaseTables, setDatabaseTables] = useState<DatabaseTable[]>([])
+  const [queue, setQueue] = useState<SheetInput[]>([])
+  const [created, setCreated] = useState<CreatedTable[]>([])
+  const [failed, setFailed] = useState<FailedTable[]>([])
+  const [result, setResult] = useState<OperationResult | null>(null)
+  const [importDurationMs, setImportDurationMs] = useState(0)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const maxRunHistory = useAppSettingsStore((state) => state.retention.maxRunHistory)
+
+  // Saved connections live in localStorage, so they can only be read on the client.
+  useEffect(() => {
+    setConnections(ConnectionStorage.getAll())
+  }, [])
+
+  const analyze = useCallback(async () => {
+    if (files.length === 0) return
+
+    setIsAnalyzing(true)
+    setError(null)
+
+    const parsed = await parseWorkbooks(files)
+    setWorkbook(parsed)
+    setIsAnalyzing(false)
+
+    if (parsed.files.length === 0) {
+      setError(parsed.errors.join(" ") || "None of the selected files contained a readable sheet")
+      return
+    }
+
+    setError(parsed.errors.length > 0 ? parsed.errors.join(" ") : null)
+    setStep(2)
+  }, [files])
+
+  const reset = useCallback(() => {
+    setStep(1)
+    setFiles([])
+    setWorkbook(null)
+    setConnection(null)
+    setDatabaseTables([])
+    setQueue([])
+    setCreated([])
+    setFailed([])
+    setResult(null)
+    setImportDurationMs(0)
+    setError(null)
+  }, [])
+
+  const selectConnection = useCallback((config: DatabaseConfig, tables: DatabaseTable[]) => {
+    setConnection(config)
+    setDatabaseTables(tables)
+    setQueue([])
+    setCreated([])
+    setFailed([])
+    setResult(null)
+    setStep(4)
+  }, [])
+
+  const selectSheets = useCallback((sheets: SheetInput[]) => {
+    setQueue(sheets)
+    setCreated([])
+    setFailed([])
+    setError(null)
+    setStep(5)
+  }, [])
+
+  const finishCreation = useCallback(
+    ({
+      created: createdTables,
+      failed: failedTables,
+      elapsedMs,
+    }: {
+      created: CreatedTable[]
+      failed: FailedTable[]
+      elapsedMs: number
+    }) => {
+      setCreated(createdTables)
+      setFailed(failedTables)
+      setImportDurationMs(elapsedMs)
+
+      if (createdTables.length === 0) {
+        setError("No tables were created. Fix the reported problems and try again.")
+        return
+      }
+
+      setStep(6)
+    },
+    [],
+  )
+
+  const finishRun = useCallback(() => {
+    if (!connection) return
+
+    const run = buildRunResult({
+      createdTables: created,
+      failedTables: failed,
+      durationMs: importDurationMs,
+      config: connection,
+    })
+
+    RunHistory.record(run, maxRunHistory)
+    setResult(run)
+    setStep(7)
+  }, [connection, created, failed, importDurationMs, maxRunHistory])
+
+  const stats = useMemo(
+    () => [
+      { label: "Files", value: files.length },
+      { label: "Sheets", value: workbook?.files.reduce((total, file) => total + file.sheets.length, 0) ?? 0 },
+      { label: "Rows", value: workbook?.files.reduce((total, file) => total + file.sheets.reduce((rows, sheet) => rows + sheet.data.length, 0), 0) ?? 0 },
+      { label: "Tables", value: created.length },
+    ],
+    [created.length, files.length, workbook],
+  )
+
+  const stage = WORKFLOW_STAGES[step - 1]
+
+  return (
+    <div className="text-foreground">
+      <PageHeader
+        title="Import workbooks"
+        description="Excel to database import workflow"
+        badge={<Badge variant="outline">Beta</Badge>}
+        actions={
+          <>
+            {connection ? <Badge variant="outline">{connection.name}</Badge> : null}
+            {step > 1 && step < 7 ? (
+              <Button variant="outline" size="sm" onClick={reset}>
+                <RefreshCw className="h-4 w-4" />
+                Reset
+              </Button>
+            ) : null}
+          </>
+        }
+      />
+
+      <main className="mx-auto w-full max-w-5xl px-6 py-8">
+        {step < 7 ? (
+          <div className="mb-8 space-y-4">
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight">{stage.title}</h2>
+              <p className="text-sm text-muted-foreground">{stage.description}</p>
+            </div>
+
+            <WorkflowStepper current={step} />
+
+            <StatGrid>
+              {stats.map((stat) => (
+                <StatCard key={stat.label} label={stat.label} value={stat.value.toLocaleString()} />
+              ))}
+            </StatGrid>
+          </div>
+        ) : null}
+
+        {error && step < 7 ? (
+          <StatusAlert tone="error" className="mb-6">
+            {error}
+          </StatusAlert>
+        ) : null}
+
+        {step === 1 ? (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+            <Card className="card-shell">
+              <CardHeader>
+                <CardTitle>Upload files</CardTitle>
+                <CardDescription>Drag and drop Excel files or browse from disk.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <FileUploadZone onFileUpload={setFiles} />
+
+                {files.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium">Selected files</p>
+                      <Badge variant="outline">
+                        {formatBytes(files.reduce((total, file) => total + file.size, 0))}
+                      </Badge>
+                    </div>
+                    <div className="space-y-2">
+                      {files.map((file) => (
+                        <div
+                          key={`${file.name}-${file.size}`}
+                          className="flex items-center justify-between rounded-xl border bg-muted/25 p-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{file.name}</p>
+                            <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+                          </div>
+                          <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card className="card-shell">
+              <CardHeader>
+                <CardTitle>Next</CardTitle>
+                <CardDescription>Read the workbooks to list their sheets, rows, and columns.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button className="w-full" onClick={analyze} disabled={isAnalyzing || files.length === 0}>
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Analyzing
+                    </>
+                  ) : (
+                    <>
+                      Analyze files
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
+
+        {step === 2 && workbook ? (
+          <ExcelPreview files={workbook.files} onProceed={() => setStep(3)} />
+        ) : null}
+
+        {step === 3 ? (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <DatabaseConnectionForm onSaved={setConnections} />
+            <DatabaseConnectionList
+              connections={connections}
+              onRemoved={setConnections}
+              onSelected={selectConnection}
+            />
+          </div>
+        ) : null}
+
+        {step === 4 && workbook && connection ? (
+          <SheetSelectionInterface
+            files={workbook.files}
+            databaseConfig={connection}
+            onProceed={selectSheets}
+          />
+        ) : null}
+
+        {step === 5 && connection ? (
+          <TableCreationInterface
+            databaseConfig={connection}
+            sheets={queue}
+            onComplete={finishCreation}
+            onCancel={() => setStep(4)}
+          />
+        ) : null}
+
+        {step === 6 && connection ? (
+          <>
+            {failed.length > 0 ? (
+              <StatusAlert tone="warning" className="mb-6">
+                {failed.length} of {failed.length + created.length} tables could not be created.{" "}
+                {failed.map((table) => `${table.tableName}: ${table.message}`).join(" · ")}
+              </StatusAlert>
+            ) : null}
+            <TablePreviewInterface
+              databaseConfig={connection}
+              tables={created.map((table) => ({ tableName: table.tableName, rowCount: table.rowCount }))}
+              onBack={() => setStep(5)}
+              onContinue={finishRun}
+            />
+          </>
+        ) : null}
+
+        {step === 7 && result ? <ResultsDashboard result={result} onStartNew={reset} /> : null}
+      </main>
+    </div>
+  )
+}

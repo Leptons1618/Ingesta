@@ -1,13 +1,28 @@
 # Ingesta
 
-Ingesta turns Excel workbooks into new database tables. Upload one or more workbooks, check the
-sheets it found, pick a saved database connection, review the schema it inferred for each sheet,
-then create one table per sheet and insert the rows. Connections and run history live in the
-browser, so a run can be repeated without re-entering anything but the files.
+Ingesta turns Excel workbooks into database tables — and then lets you work on the data on either
+side of that boundary.
 
-## The workflow
+It is a browser workspace with six pages. Import a workbook through the seven-stage wizard to create
+tables. Save database connections and explore what is already inside them. Pull a sheet into a
+dataset, clean and validate it without touching a database. Or pull a live table into the Table
+Studio, edit its shape and its rows, and apply the changes back — with a snapshot taken first.
 
-Seven stages, in order. `components/workflow-stepper.tsx` holds the list, `app/page.tsx` drives it.
+## Pages
+
+| Route | What it is for |
+|-------|----------------|
+| `/` | Dashboard: what the workspace holds, recent runs, and where to go next. |
+| `/import` | The seven-stage import wizard. |
+| `/connections` | Saved connection profiles, and an explorer for one of them: overview, tables, a SQL console, snapshots. |
+| `/data` | Datasets — parsed sheets you can reshape, validate and export without a database. |
+| `/tables` | Table Studio — pull a live table, edit columns and rows, review the plan, apply it. |
+| `/settings` | Appearance, guardrails and data retention. |
+
+## The import workflow
+
+Seven stages, in order. `components/workflow-stepper.tsx` holds the list, `app/import/page.tsx`
+drives it.
 
 | # | Stage | What happens |
 |---|-------|--------------|
@@ -21,14 +36,10 @@ Seven stages, in order. `components/workflow-stepper.tsx` holds the list, `app/p
 
 ## Features
 
+### Import
+
 - **Multi-file, multi-sheet import.** Drag and drop or browse; every selected sheet becomes its own
   table (`components/file-upload-zone.tsx`, `lib/excel.ts`).
-- **Workbook preview** of sheets, headers and rows before anything is written
-  (`components/excel-preview.tsx`).
-- **Saved connections.** Profiles are stored in the browser and can be tested, reused and removed
-  (`ConnectionStorage` in `lib/storage.ts`, `components/database-connection-form.tsx`).
-- **Server-side connection test, database listing and database creation** for engines that support
-  them, plus a table list with columns and row counts (`components/database-connection-list.tsx`).
 - **Type inference per column** (`lib/schema.ts`): BOOLEAN, DATE/DATETIME, TINYINT/SMALLINT/INT/
   BIGINT, DECIMAL, VARCHAR/TEXT, JSON, with per-engine adaptation for PostgreSQL, MySQL, SQL Server
   and SQLite.
@@ -39,12 +50,66 @@ Seven stages, in order. `components/workflow-stepper.tsx` holds the list, `app/p
   `region` and `region_2`.
 - **One transaction per table's rows.** NULL is preserved as NULL, and a constraint violation rolls
   the table's insert back instead of dropping rows.
-- **Post-import verification.** Preview the rows that landed, per table
-  (`components/table-preview-interface.tsx`).
-- **Run summary** with measured wall time, records processed, per-table results and a downloadable
-  JSON report (`components/results-dashboard.tsx`).
-- **Dark mode and appearance settings**: theme presets, table density, sticky headers, zebra rows,
-  reduced motion (`app/settings/page.tsx`, `lib/settings.ts`).
+- **Partial failure is reported, not hidden.** A sheet that fails is named in the run summary and the
+  remaining sheets still run.
+
+### Connections and the database explorer
+
+- **Saved profiles** with pinning, duplication, editing and per-profile test
+  (`components/connections/*`).
+- **Import and export of profiles as JSON**, with or without passwords, and an explicit warning when
+  the export contains them.
+- **Table browser** with server-side paging and sorting, and per-table actions: rename, truncate,
+  drop, snapshot, export the current page.
+- **SQL console** that shows its verdict before it runs — risk level, warnings, and the reason a
+  statement is refused. Write access is off by default.
+- **Snapshots** listed per table, restorable and droppable.
+
+### Datasets
+
+- **Import any workbook or CSV** into a dataset, one per sheet, stored in IndexedDB so it survives a
+  reload.
+- **Operations**: filter, derive a column, rename, drop, keep, reorder, cast, fill blanks, dedupe,
+  sort, trim, find and replace, limit. Each one reports the rows, columns and cells it changed.
+- **Custom functions** for filters, derived columns and validation rules — a small safe expression
+  language (`lib/expression.ts`) with text, number, logic, conversion and date functions.
+- **Validation rules** of seven kinds with severities, findings grouped by rule, and flagged cells
+  highlighted in the grid.
+- **Operation history with rollback to any point.** A dataset is its source grid plus an ordered
+  operation list, so rolling back is truncating the list and replaying — exact, not approximate.
+- **Export to CSV, JSON or .xlsx**, or push straight into a database table.
+
+### Table Studio
+
+- **Pull a live table** into an editable grid with server-side paging.
+- **Edit cells, delete rows, add rows**, and change the shape: add, rename, retype, drop and reorder
+  columns.
+- **A pending-changes plan.** Nothing is written until you review the plan and apply it, and every
+  change can be discarded individually or wholesale.
+- **Guardrail assessment before applying**, with the worst risk across all pending changes and every
+  warning listed. A snapshot is taken first when that setting is on.
+- **Save as** a new table, append to an existing one, or replace its contents.
+- **Row editing requires a primary key.** A table without one disables row editing and says why,
+  rather than guessing at row identity.
+
+### Guardrails and retention
+
+- **One classifier for risk** (`lib/guardrails.ts`). Dropping a table, truncating it, dropping a
+  column, deleting rows and replacing a table's contents are all classified in one place, and the
+  destructive ones require the object's name to be typed back.
+- **SQL is classified after comments and string literals are removed**, so `SELECT 1; DROP TABLE t`
+  cannot pass as read-only.
+- **Retention limits** for datasets, rows per dataset, run history, snapshots per table and dataset
+  age — editable in Settings, enforced in code, and reported rather than applied silently.
+- **Snapshots are real tables** (`_ingesta_snap_*`) with a registry, so they are portable across all
+  four engines and visible to any other tool that can open the database.
+
+### Interface
+
+- Persistent sidebar with a mobile drawer, a `⌘K` command palette, and animated route transitions.
+- A virtualized data grid — 50,000 rows scroll smoothly — with a sticky header, drag-to-resize
+  columns, inline editing, row selection and flagged-cell highlighting.
+- Theme presets, table density, sticky headers, zebra rows, compact cards and a reduce-motion switch.
 
 ## Quick start
 
@@ -57,76 +122,90 @@ corepack pnpm install
 corepack pnpm dev
 ```
 
-Open <http://localhost:3000>. Appearance settings are at `/settings`.
+Open <http://localhost:3000>. Appearance, guardrails and retention are at `/settings`.
 
 ## Checks
 
 ```bash
-corepack pnpm check        # pipeline + SQLite assertions against the real modules
+corepack pnpm check        # six assertion scripts against the real modules
 corepack pnpm check:types  # tsc over the app and over scripts/
 corepack pnpm build        # production build
 ```
 
-`scripts/check-pipeline.ts` runs a workbook built in memory through parsing, type detection, value
-transformation and DDL generation for all four engines. `scripts/check-sqlite.ts` drives `lib/db`
-against a throwaway SQLite file: create, insert, preview, introspect, and the rollback on a
-constraint violation. Both are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verifying-a-change).
+| Script | What it proves |
+|--------|----------------|
+| `check-pipeline.ts` | Parse → detect → transform → DDL for all four engines, plus sample-value typing. |
+| `check-workspace.ts` | Expressions, every operation, replay-equals-incremental, exact rollback, validation, guardrail classification, CSV quoting. |
+| `check-data.ts` | The `/data` round trip: import → filter/derive/sort → effect counts → rollback → export. |
+| `check-table-ops.ts` | Real SQLite: structure, paging, alter, the column-type rebuild, row mutations, snapshots, query guard. |
+| `check-tables.ts` | The Table Studio plan: ordering, payload shapes, guardrail gates, partial failure, keyless tables. |
+| `check-sqlite.ts` | Real SQLite round trip: create, insert, preview, introspect, `NOT NULL` rollback. |
+
+Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verifying-a-change) and
+[docs/WORKSPACE.md](docs/WORKSPACE.md#verifying-a-change).
 
 ## Project structure
 
 ```
 app/
-  layout.tsx                  root layout and providers
-  page.tsx                    the seven-stage workflow and its state
-  globals.css                 Tailwind v4 entry and theme tokens
-  settings/page.tsx           appearance settings
-  api/                        the seven POST routes (see docs/API.md)
-    test-connection/route.ts
-    list-databases/route.ts
-    create-database/route.ts
-    get-tables/route.ts
-    create-table/route.ts
-    insert-data/route.ts
-    preview-table/route.ts
+  layout.tsx                  root layout, providers, the app shell
+  page.tsx                    dashboard
+  globals.css                 Tailwind v4 entry, theme tokens and motion
+  import/page.tsx             the seven-stage workflow and its state
+  connections/page.tsx        connection profiles and the database explorer
+  data/page.tsx               datasets: operations, validation, export
+  tables/page.tsx             table studio: pull, edit, apply
+  settings/page.tsx           appearance, guardrails, retention
+  api/                        the fifteen POST routes (see docs/API.md)
 components/
+  app-shell.tsx               sidebar, mobile drawer, route transitions
+  command-palette.tsx         ⌘K navigation
+  toaster.tsx                 toast host
+  connection-select.tsx       shared connection picker
+  expression-field.tsx        expression input with live validation
   workflow-stepper.tsx        the seven stage definitions
   file-upload-zone.tsx        stage 1
   excel-preview.tsx           stage 2
-  database-connection-form.tsx
-  database-connection-list.tsx
-  sheet-selection-interface.tsx
-  table-creation-interface.tsx
-  table-preview-interface.tsx
+  database-connection-form.tsx / database-connection-list.tsx
+  sheet-selection-interface.tsx / table-creation-interface.tsx / table-preview-interface.tsx
   results-dashboard.tsx
-  app-settings-provider.tsx
-  theme-provider.tsx
-  theme-toggle.tsx
-  common/                     shared UI primitives (StatCard, StatGrid, LoadingCard,
-                              EmptyState, StatusAlert, TableShell, DataTable, ChipButton,
-                              PageHeader)
-  ui/                         shadcn/ui primitives (button, card, input, select, table,
-                              tabs, checkbox, switch, alert, badge, label, progress,
-                              scroll-area)
+  connections/                profile list, editor, explorer, table browser, query console, snapshots
+  data/                       dataset list, grid, operations, history, validation, export
+  tables/                     selection bar, pending changes, column editor, snapshots, save as
+  common/                     DataGrid, ConfirmDialog, RiskBadge, Toolbar, Section, MiniBars,
+                              StatCard, StatGrid, EmptyState, LoadingCard, StatusAlert,
+                              TableShell, DataTable, ChipButton, PageHeader, nav items
+  ui/                         Radix wrappers: button, card, input, select, dialog, alert-dialog,
+                              dropdown-menu, popover, tooltip, separator, toast, table, tabs,
+                              checkbox, switch, alert, badge, label, progress, scroll-area
 lib/
   types.ts                    every shared domain type
   excel.ts                    parseWorkbooks
   schema.ts                   analyzeColumn, analyzeSheet, name sanitizers, type adaptation
-  transform.ts                transformDataRows and date handling
+  transform.ts                coerceCell, transformDataRows and date handling
+  expression.ts               the safe expression language
+  operations.ts               the data operation engine, validation, grid↔table conversion
+  guardrails.ts               risk classification for every destructive action
+  workspace.ts                the IndexedDB dataset store and retention
+  push.ts                     writing a grid into a database
+  export.ts                   CSV, JSON and .xlsx out; workbooks back in
   db/
     dialect.ts                the only per-engine code (quoting, placeholders, DDL, drivers)
     index.ts                  each database operation, written once
-  api.ts                      postJson client helper
+  api.ts                      the typed client over the routes
   http.ts                     jsonRoute server wrapper
   storage.ts                  ConnectionStorage, RunHistory, buildRunResult
-  settings.ts                 zustand store for appearance settings
-  utils.ts                    cn, errorMessage, formatBytes
+  settings.ts                 zustand store for appearance, guardrails and retention
+  toast.ts                    toast store
+  utils.ts                    cn, errorMessage, formatBytes, newId, formatters
 docs/
-  ARCHITECTURE.md             pipeline, stages, database layer, decisions
-  API.md                      the seven routes
-  TRACKER.md                  refactor status, limitations, backlog
+  ARCHITECTURE.md             pages, pipeline, database layer, decisions
+  WORKSPACE.md                datasets, operations, expressions, guardrails, snapshots, retention
+  API.md                      the fifteen routes
+  TRACKER.md                  status, limitations, backlog
 scripts/
-  check-pipeline.ts           parse -> detect -> transform -> DDL assertions
-  check-sqlite.ts             real SQLite round trip
+  check-pipeline.ts  check-workspace.ts  check-data.ts
+  check-table-ops.ts  check-tables.ts  check-sqlite.ts
 ```
 
 ## Supported databases
@@ -135,13 +214,17 @@ scripts/
 |----------|--------|--------------|-------|
 | PostgreSQL | `pg` | 5432 | `"identifier"` quoting, `$1` placeholders, `id SERIAL PRIMARY KEY` when no primary key is chosen. JSON maps to JSONB. |
 | MySQL | `mysql2` | 3306 | `` `identifier` `` quoting, `?` placeholders, `id INT AUTO_INCREMENT PRIMARY KEY`. Inferred types are used as-is. |
-| SQL Server | `mssql` | 1433 | `[identifier]` quoting, `@p0` placeholders, `id INT IDENTITY(1,1) PRIMARY KEY`. VARCHAR becomes NVARCHAR, BOOLEAN becomes BIT, DATETIME becomes DATETIME2. |
-| SQLite | `sqlite3` | — | The `database` field is a file path. `"identifier"` quoting, `?` placeholders, `id INTEGER PRIMARY KEY AUTOINCREMENT`. Dates and JSON are stored as TEXT. |
+| SQL Server | `mssql` | 1433 | `[identifier]` quoting, `@p0` placeholders, `id INT IDENTITY(1,1) PRIMARY KEY`. VARCHAR becomes NVARCHAR, BOOLEAN becomes BIT, DATETIME becomes DATETIME2, and CTAS uses `SELECT * INTO`. |
+| SQLite | `sqlite3` | — | The `database` field is a file path. `"identifier"` quoting, `?` placeholders, `id INTEGER PRIMARY KEY AUTOINCREMENT`. Dates and JSON are stored as TEXT, and a column type change is a table rebuild. |
+
+Only SQLite is exercised against a live database in this repository. The other three are asserted at
+the SQL, DDL and type-mapping level; their drivers are not run.
 
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the pipeline, the stages and the database layer
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the pages, the pipeline and the database layer
   fit together, and the decisions behind them.
-- [docs/API.md](docs/API.md) — the seven routes, with request bodies, payloads and error shapes.
-- [docs/TRACKER.md](docs/TRACKER.md) — what the refactor changed, what has been verified, and the
-  known limitations.
+- [docs/WORKSPACE.md](docs/WORKSPACE.md) — the data model: grids, operations, the expression
+  language, guardrails, snapshots and retention.
+- [docs/API.md](docs/API.md) — the fifteen routes, with request bodies, payloads and error shapes.
+- [docs/TRACKER.md](docs/TRACKER.md) — what has been verified, and the known limitations.

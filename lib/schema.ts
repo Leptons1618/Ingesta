@@ -112,7 +112,6 @@ function detectType(values: unknown[]): { suggestedType: string; maxLength?: num
 
 export function analyzeColumn(name: string, values: unknown[]): ColumnAnalysis {
   const present = values.filter((value) => !isBlank(value))
-  const distinct = [...new Set(present.map((value) => String(value)))]
   const nullCount = values.length - present.length
 
   if (present.length === 0) {
@@ -125,6 +124,19 @@ export function analyzeColumn(name: string, values: unknown[]): ColumnAnalysis {
       nullCount,
       totalCount: values.length,
     }
+  }
+
+  // Deduplicate on the text form but keep the original value, so a sample still
+  // knows it is a Date, a number or a boolean. Stringifying here is what used to
+  // make the schema editor show `Mon Jan 15 2024 05:30:00 GMT+0530` beside a
+  // column it had correctly typed as DATE.
+  const seen = new Set<string>()
+  const distinct: unknown[] = []
+  for (const value of present) {
+    const key = String(value)
+    if (seen.has(key)) continue
+    seen.add(key)
+    distinct.push(value)
   }
 
   const { suggestedType, maxLength } = detectType(present)
@@ -207,6 +219,30 @@ const TYPE_OVERRIDES: Record<DatabaseType, Record<string, string>> = {
     TEXT: "NVARCHAR(MAX)",
   },
 }
+
+/**
+ * The semantic types an editor may offer. These are the strings `detectType`
+ * produces plus a few the user may reasonably want, and every one of them has
+ * an engine mapping (or passes through unchanged). Editors show these; the
+ * engine-specific name is applied later by `adaptTypeForDatabase`.
+ */
+export const COLUMN_TYPE_OPTIONS: Array<{ value: string; label: string; group: string }> = [
+  { value: "BOOLEAN", label: "Boolean", group: "Logic" },
+  { value: "TINYINT", label: "Tiny integer", group: "Number" },
+  { value: "SMALLINT", label: "Small integer", group: "Number" },
+  { value: "INT", label: "Integer", group: "Number" },
+  { value: "BIGINT", label: "Big integer", group: "Number" },
+  { value: "DECIMAL(10,2)", label: "Decimal (10,2)", group: "Number" },
+  { value: "FLOAT", label: "Float", group: "Number" },
+  { value: "VARCHAR(50)", label: "Text (50)", group: "Text" },
+  { value: "VARCHAR(100)", label: "Text (100)", group: "Text" },
+  { value: "VARCHAR(255)", label: "Text (255)", group: "Text" },
+  { value: "VARCHAR(500)", label: "Text (500)", group: "Text" },
+  { value: "TEXT", label: "Long text", group: "Text" },
+  { value: "JSON", label: "JSON", group: "Text" },
+  { value: "DATE", label: "Date", group: "Date and time" },
+  { value: "DATETIME", label: "Date and time", group: "Date and time" },
+]
 
 export function adaptTypeForDatabase(dataType: string, databaseType: DatabaseType): string {
   const type = dataType.toUpperCase()

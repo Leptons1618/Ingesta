@@ -1,19 +1,86 @@
 "use client"
 
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, Monitor, MoonStar, Palette, SlidersHorizontal, SunMedium, TableProperties } from "lucide-react"
+import {
+  Database,
+  HardDrive,
+  Loader2,
+  Monitor,
+  MoonStar,
+  Palette,
+  ShieldCheck,
+  SlidersHorizontal,
+  SunMedium,
+  TableProperties,
+  Trash2,
+} from "lucide-react"
 
-import { PageHeader } from "@/components/common"
+import { PageHeader, StatCard, StatGrid, StatusAlert } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { themePresetOptions, useAppSettingsStore, type TableDensity, type ThemeMode } from "@/lib/settings"
+import { RunHistory } from "@/lib/storage"
+import type { RetentionPolicy } from "@/lib/types"
+import { formatBytes } from "@/lib/utils"
+import { Workspace } from "@/lib/workspace"
 
 const themeModeOptions: Array<{ value: ThemeMode; label: string; icon: typeof SunMedium }> = [
   { value: "light", label: "Light", icon: SunMedium },
   { value: "dark", label: "Dark", icon: MoonStar },
   { value: "system", label: "System", icon: Monitor },
+]
+
+/** The numeric limits, in the order they appear, with the copy that explains them. */
+const retentionFields: Array<{ key: keyof RetentionPolicy; title: string; description: string; min: number; max: number; step: number; unit: string }> = [
+  {
+    key: "maxDatasets",
+    title: "Datasets kept",
+    description: "Oldest datasets are pruned once this many are stored.",
+    min: 1,
+    max: 500,
+    step: 1,
+    unit: "datasets",
+  },
+  {
+    key: "maxRowsPerDataset",
+    title: "Rows per dataset",
+    description: "An import larger than this is truncated before it reaches the browser workspace.",
+    min: 100,
+    max: 1_000_000,
+    step: 1000,
+    unit: "rows",
+  },
+  {
+    key: "maxRunHistory",
+    title: "Run history",
+    description: "Completed import runs kept for the dashboard and the run report.",
+    min: 1,
+    max: 200,
+    step: 1,
+    unit: "runs",
+  },
+  {
+    key: "maxSnapshotsPerTable",
+    title: "Snapshots per table",
+    description: "Database-side copies kept for one table before the oldest is dropped.",
+    min: 1,
+    max: 50,
+    step: 1,
+    unit: "snapshots",
+  },
+  {
+    key: "datasetTtlDays",
+    title: "Dataset lifetime",
+    description: "Datasets untouched for this long are pruned. Set to 0 to keep them forever.",
+    min: 0,
+    max: 365,
+    step: 1,
+    unit: "days",
+  },
 ]
 
 export default function SettingsPage() {
@@ -24,6 +91,8 @@ export default function SettingsPage() {
   const stickyHeaders = useAppSettingsStore((state) => state.stickyHeaders)
   const reducedMotion = useAppSettingsStore((state) => state.reducedMotion)
   const compactCards = useAppSettingsStore((state) => state.compactCards)
+  const retention = useAppSettingsStore((state) => state.retention)
+  const guardrails = useAppSettingsStore((state) => state.guardrails)
   const setThemeMode = useAppSettingsStore((state) => state.setThemeMode)
   const setThemePreset = useAppSettingsStore((state) => state.setThemePreset)
   const setTableDensity = useAppSettingsStore((state) => state.setTableDensity)
@@ -31,29 +100,78 @@ export default function SettingsPage() {
   const setStickyHeaders = useAppSettingsStore((state) => state.setStickyHeaders)
   const setReducedMotion = useAppSettingsStore((state) => state.setReducedMotion)
   const setCompactCards = useAppSettingsStore((state) => state.setCompactCards)
+  const setRetention = useAppSettingsStore((state) => state.setRetention)
+  const setGuardrails = useAppSettingsStore((state) => state.setGuardrails)
   const resetSettings = useAppSettingsStore((state) => state.resetSettings)
 
+  const [usage, setUsage] = useState<{ datasets: number; rows: number; bytes: number } | null>(null)
+  const [runs, setRuns] = useState(0)
+  const [message, setMessage] = useState<{ tone: "success" | "warning"; text: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const refreshUsage = useCallback(async () => {
+    setUsage(await Workspace.usage())
+    setRuns(RunHistory.getAll().length)
+  }, [])
+
+  // IndexedDB and localStorage are only readable in the browser.
+  useEffect(() => {
+    void refreshUsage()
+  }, [refreshUsage])
+
+  const prune = useCallback(async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const { removed, remaining } = await Workspace.prune(retention)
+      const trimmedRuns = RunHistory.trim(retention.maxRunHistory)
+      await refreshUsage()
+      setMessage({
+        tone: removed.length > 0 || trimmedRuns > 0 ? "warning" : "success",
+        text:
+          removed.length === 0 && trimmedRuns === 0
+            ? `Nothing to prune. ${remaining} datasets and ${runs} runs are within the limits.`
+            : `Removed ${removed.length} dataset${removed.length === 1 ? "" : "s"} and ${trimmedRuns} run${trimmedRuns === 1 ? "" : "s"}.`,
+      })
+    } finally {
+      setBusy(false)
+    }
+  }, [refreshUsage, retention, runs])
+
+  const clearDatasets = useCallback(async () => {
+    setBusy(true)
+    await Workspace.clear()
+    await refreshUsage()
+    setBusy(false)
+    setMessage({ tone: "warning", text: "Every stored dataset was deleted from this browser." })
+  }, [refreshUsage])
+
+  const clearHistory = useCallback(async () => {
+    setBusy(true)
+    RunHistory.clear()
+    await refreshUsage()
+    setBusy(false)
+    setMessage({ tone: "warning", text: "Run history was cleared." })
+  }, [refreshUsage])
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="text-foreground">
       <PageHeader
         title="Settings"
         description="Personalize the look, feel, and data workspace behaviour."
         actions={
           <>
-            <Button variant="outline" asChild>
-              <Link href="/">
-                <ArrowLeft className="h-4 w-4" />
-                Back
-              </Link>
-            </Button>
             <Button variant="outline" onClick={resetSettings}>
               Reset defaults
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href="/">Dashboard</Link>
             </Button>
           </>
         }
       />
 
-      <main className="mx-auto grid w-full max-w-5xl gap-6 px-6 py-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <main className="grid w-full gap-6 px-6 py-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">
           <Card className="card-shell">
             <CardHeader>
@@ -73,7 +191,7 @@ export default function SettingsPage() {
                       key={option.value}
                       type="button"
                       onClick={() => setThemeMode(option.value)}
-                      className={`cursor-pointer rounded-xl border px-4 py-4 text-left transition-colors ${isActive ? "border-primary bg-primary/8" : "hover:bg-muted/40"}`}
+                      className={`cursor-pointer rounded-xl border px-4 py-4 text-left transition-all duration-200 hover:-translate-y-0.5 ${isActive ? "border-primary bg-primary/8" : "hover:bg-muted/40"}`}
                     >
                       <Icon className="h-4 w-4 text-primary" />
                       <p className="mt-3 font-medium">{option.label}</p>
@@ -93,7 +211,7 @@ export default function SettingsPage() {
                         key={preset.value}
                         type="button"
                         onClick={() => setThemePreset(preset.value)}
-                        className={`cursor-pointer rounded-xl border px-4 py-4 text-left transition-colors ${isActive ? "border-primary bg-primary/8" : "hover:bg-muted/40"}`}
+                        className={`cursor-pointer rounded-xl border px-4 py-4 text-left transition-all duration-200 hover:-translate-y-0.5 ${isActive ? "border-primary bg-primary/8" : "hover:bg-muted/40"}`}
                       >
                         <div className="mb-3 flex gap-2">
                           <span className="h-3 w-3 rounded-full bg-primary" />
@@ -159,6 +277,96 @@ export default function SettingsPage() {
           <Card className="card-shell">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-primary" />
+                Guardrails
+              </CardTitle>
+              <CardDescription>
+                How much the app holds you back before something irreversible happens. Nothing here is applied
+                silently — every destructive action is classified in <code className="text-xs">lib/guardrails.ts</code>.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <SettingsSwitch
+                title="Type to confirm destructive actions"
+                description="Dropping a table, truncating it, or replacing its rows requires typing the object's name. Turning this off leaves the warning in place but removes the typed step."
+                checked={guardrails.requireTypedConfirmation}
+                onCheckedChange={(value) => setGuardrails({ requireTypedConfirmation: value })}
+              />
+              <SettingsSwitch
+                title="Snapshot before a destructive change"
+                description="A copy of the table is stored in the database before it is altered, so the change can be rolled back."
+                checked={guardrails.snapshotBeforeMutation}
+                onCheckedChange={(value) => setGuardrails({ snapshotBeforeMutation: value })}
+              />
+              <SettingsSwitch
+                title="Allow write statements in the query console"
+                description="Off by default. While off, only SELECT, WITH, EXPLAIN and read-only pragmas run; anything that changes the database is refused before it reaches the server."
+                checked={guardrails.allowWriteSql}
+                onCheckedChange={(value) => setGuardrails({ allowWriteSql: value })}
+              />
+              <SettingsNumber
+                title="Rows per page when browsing a table"
+                description="How much of a table is pulled into the browser at once. Larger pages mean fewer round trips and more memory."
+                value={guardrails.maxRowsPerPage}
+                min={10}
+                max={5000}
+                step={10}
+                unit="rows"
+                onChange={(value) => setGuardrails({ maxRowsPerPage: value })}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="card-shell">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <HardDrive className="h-5 w-5 text-primary" />
+                Data retention
+              </CardTitle>
+              <CardDescription>
+                What the browser workspace is allowed to keep. Datasets live in IndexedDB; connections and run
+                history live in localStorage.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                {retentionFields.map((field) => (
+                  <SettingsNumber
+                    key={field.key}
+                    title={field.title}
+                    description={field.description}
+                    value={retention[field.key]}
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    unit={field.unit}
+                    onChange={(value) => setRetention({ [field.key]: value } as Partial<RetentionPolicy>)}
+                  />
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+                <Button variant="outline" onClick={prune} disabled={busy}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Prune now
+                </Button>
+                <Button variant="outline" onClick={clearDatasets} disabled={busy}>
+                  Delete all datasets
+                </Button>
+                <Button variant="outline" onClick={clearHistory} disabled={busy}>
+                  Clear run history
+                </Button>
+              </div>
+
+              {message ? (
+                <StatusAlert tone={message.tone}>{message.text}</StatusAlert>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card className="card-shell">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
                 <SlidersHorizontal className="h-5 w-5 text-primary" />
                 Performance and motion
               </CardTitle>
@@ -178,6 +386,24 @@ export default function SettingsPage() {
         <aside className="space-y-6">
           <Card className="card-shell">
             <CardHeader>
+              <CardTitle>Workspace storage</CardTitle>
+              <CardDescription>What this browser is currently holding.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <StatGrid className="grid-cols-2 lg:grid-cols-2">
+                <StatCard label="Datasets" value={usage ? usage.datasets.toLocaleString() : "—"} />
+                <StatCard label="Rows" value={usage ? usage.rows.toLocaleString() : "—"} />
+                <StatCard label="Size" value={usage ? formatBytes(usage.bytes) : "—"} />
+                <StatCard label="Runs" value={runs.toLocaleString()} />
+              </StatGrid>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Size is an estimate of the grid held in memory, not the IndexedDB footprint on disk.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="card-shell">
+            <CardHeader>
               <CardTitle>Preview</CardTitle>
               <CardDescription>A quick read on the current personalization settings.</CardDescription>
             </CardHeader>
@@ -188,6 +414,22 @@ export default function SettingsPage() {
               <PreviewRow label="Sticky headers" value={stickyHeaders ? "On" : "Off"} />
               <PreviewRow label="Zebra rows" value={zebraRows ? "On" : "Off"} />
               <PreviewRow label="Reduced motion" value={reducedMotion ? "On" : "Off"} />
+              <PreviewRow label="Typed confirmation" value={guardrails.requireTypedConfirmation ? "On" : "Off"} />
+              <PreviewRow label="Write SQL" value={guardrails.allowWriteSql ? "On" : "Off"} />
+              <PreviewRow label="Auto snapshot" value={guardrails.snapshotBeforeMutation ? "On" : "Off"} />
+            </CardContent>
+          </Card>
+
+          <Card className="card-shell">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-primary" />
+                Where things live
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm text-muted-foreground">
+              <p>Connections and run history are stored in this browser's localStorage, passwords included. They never leave the device except in the request that opens the connection.</p>
+              <p>Datasets are stored in IndexedDB. Snapshots are stored inside the target database as real tables named <code className="text-xs">_ingesta_snap_*</code>.</p>
             </CardContent>
           </Card>
         </aside>
@@ -209,7 +451,7 @@ function SettingsSwitch({
 }) {
   return (
     <div className="flex items-start justify-between gap-4 rounded-xl border p-4">
-      <div>
+      <div className="min-w-0">
         <p className="font-medium">{title}</p>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
@@ -218,9 +460,55 @@ function SettingsSwitch({
   )
 }
 
+function SettingsNumber({
+  title,
+  description,
+  value,
+  min,
+  max,
+  step,
+  unit,
+  onChange,
+}: {
+  title: string
+  description: string
+  value: number
+  min: number
+  max: number
+  step: number
+  unit: string
+  onChange: (value: number) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-4 rounded-xl border p-4">
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{title}</p>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          className="w-28"
+          onChange={(event) => {
+            const parsed = Number(event.target.value)
+            if (!Number.isFinite(parsed)) return
+            // Clamp on change rather than on blur so the stored value is always usable.
+            onChange(Math.min(max, Math.max(min, Math.trunc(parsed))))
+          }}
+        />
+        <span className="w-16 shrink-0 text-xs text-muted-foreground">{unit}</span>
+      </div>
+    </div>
+  )
+}
+
 function PreviewRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+    <div className="flex items-center justify-between gap-4">
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium capitalize">{value}</span>
     </div>

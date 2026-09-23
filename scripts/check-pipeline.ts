@@ -12,7 +12,7 @@ import * as XLSX from "xlsx"
 
 import { createTableSql, dialectFor } from "@/lib/db/dialect"
 import { parseWorkbooks } from "@/lib/excel"
-import { adaptTypeForDatabase, analyzeSheet, sanitizeTableName } from "@/lib/schema"
+import { adaptTypeForDatabase, analyzeColumn, analyzeSheet, sanitizeTableName } from "@/lib/schema"
 import { formatDateForDatabase, transformDataRows } from "@/lib/transform"
 import type { DatabaseType, ExcelSheet } from "@/lib/types"
 
@@ -64,6 +64,25 @@ assert.equal(typeOf("active"), "BOOLEAN")
 // Primary key: `id` is unique and complete, so it wins over the auto-id fallback.
 assert.equal(config.primaryKey, "id")
 assert.equal(analyzeSheet({ name: "x", headers: ["a"], data: [[1], [1]] }).primaryKey, "id")
+
+// Samples keep the type they were detected from. Stringifying them here is what
+// used to make the schema editor render a DATE column's samples as
+// `Mon Jan 15 2024 05:30:00 GMT+0530 (India Standard Time)`.
+const joinedSamples = config.columns.find((column) => column.name === "joined")?.samples ?? []
+assert.ok(joinedSamples.length > 0, "the DATE column has samples")
+assert.ok(joinedSamples.every((sample) => sample instanceof Date), "date samples stay Date objects")
+assert.ok(
+  config.columns.find((column) => column.name === "amount")?.samples.every((sample) => typeof sample === "number"),
+  "numeric samples stay numbers",
+)
+assert.ok(
+  config.columns.find((column) => column.name === "quantity")?.samples.every((sample) => typeof sample === "number"),
+  "integer samples stay numbers",
+)
+// Duplicates are still collapsed, and the count still reflects distinct values.
+const duplicateSamples = analyzeColumn("region", ["EU", "EU", "US", "EU"])
+assert.deepEqual(duplicateSamples.samples, ["EU", "US"])
+assert.equal(duplicateSamples.uniqueValues, 2)
 
 // Values are coerced to what the detected column type expects.
 const transformed = transformDataRows(sheet.data, config.columns)
