@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { postJson } from "@/lib/api"
+import { DEFAULT_INSERT_EXECUTION, MAX_BATCH_SIZE } from "@/lib/import-execution"
 import { analyzeSheet } from "@/lib/schema"
 import { transformDataRows } from "@/lib/transform"
 import type {
@@ -21,22 +22,25 @@ import type {
   DatabaseConfig,
   DatabaseType,
   FailedTable,
+  InsertExecutionOptions,
+  InsertReport,
   SheetInput,
   TableCreationConfig,
+  TableCreationOutcome,
 } from "@/lib/types"
 import { formatCellValue } from "@/lib/utils"
 
 interface TableCreationInterfaceProps {
   databaseConfig: DatabaseConfig
   sheets: SheetInput[]
-  onComplete: (result: { created: CreatedTable[]; failed: FailedTable[]; elapsedMs: number }) => void
+  onComplete: (result: {
+    created: CreatedTable[]
+    failed: FailedTable[]
+    /** Per-sheet result messages, shown by the page once the loop finishes. */
+    outcomes: TableCreationOutcome[]
+    elapsedMs: number
+  }) => void
   onCancel: () => void
-}
-
-interface CreationOutcome {
-  tableName: string
-  success: boolean
-  message: string
 }
 
 const TYPE_OPTIONS: Record<DatabaseType, string[]> = {
@@ -149,6 +153,33 @@ function describeSheet(config: TableCreationConfig, sheet: SheetInput): string[]
   return insights
 }
 
+/** One execution switch with the sentence that explains what it does. */
+function ExecutionToggle({
+  id,
+  label,
+  hint,
+  checked,
+  onCheckedChange,
+}: {
+  id: string
+  label: string
+  hint: string
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+      <div className="min-w-0">
+        <Label htmlFor={id} className="text-sm font-medium">
+          {label}
+        </Label>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </div>
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  )
+}
+
 export function TableCreationInterface({
   databaseConfig,
   sheets,
@@ -156,12 +187,13 @@ export function TableCreationInterface({
   onCancel,
 }: TableCreationInterfaceProps) {
   const [currentSheetIndex, setCurrentSheetIndex] = useState(0)
-  const [outcomes, setOutcomes] = useState<CreationOutcome[]>([])
+  const [outcomes, setOutcomes] = useState<TableCreationOutcome[]>([])
   const [isCreating, setIsCreating] = useState(false)
   // Columns keep the type the analysis detected. Each engine's own mapping is
   // applied when the DDL is built, so a BOOLEAN column stays a boolean here and
   // its values are still coerced as booleans.
   const [configs, setConfigs] = useState<TableCreationConfig[]>(() => sheets.map((sheet) => analyzeSheet(sheet)))
+  const [execution, setExecution] = useState<InsertExecutionOptions>(DEFAULT_INSERT_EXECUTION)
 
   const sheet = sheets[currentSheetIndex]
   const config = configs[currentSheetIndex]
@@ -217,7 +249,7 @@ export function TableCreationInterface({
     const startedAt = Date.now()
     const created: CreatedTable[] = []
     const failed: FailedTable[] = []
-    const results: CreationOutcome[] = []
+    const results: TableCreationOutcome[] = []
 
     for (const [index, tableConfig] of configs.entries()) {
       const source = sheets[index]
@@ -239,13 +271,17 @@ export function TableCreationInterface({
         continue
       }
 
-      const insertResponse = await postJson<{ insertedRows: number }>("/api/insert-data", {
+      const insertResponse = await postJson<InsertReport>("/api/insert-data", {
         config: databaseConfig,
         tableName: tableConfig.tableName,
         columnNames,
+        columnTypes: tableConfig.columns.map((column) => column.suggestedType),
         data: transformDataRows(source.data, tableConfig.columns),
+        execution,
       })
 
+      // A failed insert still reports what landed, so the row count is measured
+      // rather than assumed. The route puts that measurement in the error text.
       if (!insertResponse.ok) {
         const message = `Table created, but the rows were not inserted: ${insertResponse.error}`
         results.push({ tableName: tableConfig.tableName, success: false, message })
@@ -253,28 +289,38 @@ export function TableCreationInterface({
           tableName: tableConfig.tableName,
           fileName: source.fileName,
           sheetName: source.name,
-          message: insertResponse.error,
+          message,
         })
         continue
       }
 
+      const report = insertResponse.data
+      const details = [
+        `${report.insertedRows.toLocaleString()} rows`,
+        report.totalBatches > 1 ? `${report.processedBatches} of ${report.totalBatches} batches` : null,
+        report.skippedRows > 0 ? `${report.skippedRows.toLocaleString()} skipped` : null,
+        `${(report.durationMs / 1000).toFixed(2)}s`,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+
       results.push({
         tableName: tableConfig.tableName,
         success: true,
-        message: `Created "${tableConfig.tableName}" with ${insertResponse.data.insertedRows.toLocaleString()} rows.`,
+        message: `Created "${tableConfig.tableName}" with ${details}.${report.warnings.length > 0 ? ` ${report.warnings.join(" ")}` : ""}`,
       })
       created.push({
         tableName: tableConfig.tableName,
         fileName: source.fileName,
         sheetName: source.name,
         columns: columnNames,
-        rowCount: source.data.length,
+        rowCount: report.insertedRows,
       })
     }
 
     setOutcomes(results)
     setIsCreating(false)
-    onComplete({ created, failed, elapsedMs: Date.now() - startedAt })
+    onComplete({ created, failed, outcomes: results, elapsedMs: Date.now() - startedAt })
   }
 
   if (sheets.length === 0) {
@@ -509,18 +555,108 @@ export function TableCreationInterface({
             </TableShell>
           </div>
 
-          {outcomes.length > 0 ? (
-            <div className="space-y-3">
-              <Label className="text-base font-semibold">Import results</Label>
+          <div className="space-y-4 rounded-xl border p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">Import execution</p>
+                <p className="text-xs text-muted-foreground">
+                  How the rows are written. These settings apply to every sheet in this run.
+                </p>
+              </div>
+              <Badge variant="outline">
+                {execution.batchSize > 0
+                  ? `${execution.batchSize.toLocaleString()} rows per batch`
+                  : "One transaction"}
+              </Badge>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                {outcomes.map((outcome, index) => (
-                  <StatusAlert key={index} tone={outcome.success ? "success" : "error"}>
-                    <span className="font-mono text-xs">{outcome.tableName}</span> — {outcome.message}
-                  </StatusAlert>
-                ))}
+                <Label htmlFor="execution-batch-size">Batch size</Label>
+                <Input
+                  id="execution-batch-size"
+                  type="number"
+                  min={0}
+                  max={MAX_BATCH_SIZE}
+                  step={100}
+                  value={execution.batchSize}
+                  onChange={(event) =>
+                    setExecution({
+                      ...execution,
+                      batchSize: Math.max(0, Math.min(MAX_BATCH_SIZE, Number(event.target.value) || 0)),
+                    })
+                  }
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Rows per transaction. 0 writes the whole sheet in one transaction, so a failure leaves nothing
+                  behind.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="execution-blank-cells">Blank cells</Label>
+                <Select
+                  value={execution.blankCells}
+                  onValueChange={(value) =>
+                    setExecution({ ...execution, blankCells: value as InsertExecutionOptions["blankCells"] })
+                  }
+                >
+                  <SelectTrigger id="execution-blank-cells" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="null">Write NULL</SelectItem>
+                    <SelectItem value="skip-row">Skip the row</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  A blank cell is never turned into 0, false or today&apos;s date.
+                </p>
               </div>
             </div>
-          ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ExecutionToggle
+                id="execution-skip-empty"
+                label="Skip empty rows"
+                hint="Drops rows whose every cell is blank — trailing Excel rows, usually."
+                checked={execution.skipEmptyRows}
+                onCheckedChange={(checked) => setExecution({ ...execution, skipEmptyRows: checked })}
+              />
+              <ExecutionToggle
+                id="execution-trim"
+                label="Trim text"
+                hint="Removes leading and trailing whitespace from text cells."
+                checked={execution.trimStrings}
+                onCheckedChange={(checked) => setExecution({ ...execution, trimStrings: checked })}
+              />
+              <ExecutionToggle
+                id="execution-convert"
+                label="Convert to column types"
+                hint="Coerces each cell to its column's type before it is written."
+                checked={execution.convertTypes}
+                onCheckedChange={(checked) => setExecution({ ...execution, convertTypes: checked })}
+              />
+              <ExecutionToggle
+                id="execution-continue"
+                label="Continue after a failed batch"
+                hint="Later batches still run, and the sheet is reported as failed with the rows that landed."
+                checked={execution.continueOnBatchError}
+                onCheckedChange={(checked) => setExecution({ ...execution, continueOnBatchError: checked })}
+              />
+            </div>
+
+            <StatusAlert tone={execution.batchSize > 0 ? "info" : "success"}>
+              {execution.batchSize > 0
+                ? `Each batch commits on its own: a failure at batch 4 keeps the rows from batches 1–3.${
+                    execution.continueOnBatchError
+                      ? " Later batches still run."
+                      : " The run stops at the batch that failed."
+                  }`
+                : "One transaction for the whole sheet: either every row is written or none is."}
+            </StatusAlert>
+          </div>
 
           <div className="flex items-center justify-between border-t pt-6">
             <Button variant="outline" onClick={onCancel} disabled={isCreating}>

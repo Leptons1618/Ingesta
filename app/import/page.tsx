@@ -15,10 +15,12 @@ import { PageHeader, StatCard, StatGrid, StatusAlert } from "@/components/common
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { WorkflowGuidancePanel } from "@/components/workflow-guidance"
 import { WORKFLOW_STAGES, WorkflowStepper } from "@/components/workflow-stepper"
 import { parseWorkbooks } from "@/lib/excel"
 import { useAppSettingsStore } from "@/lib/settings"
 import { buildRunResult, ConnectionStorage, RunHistory } from "@/lib/storage"
+import { buildWorkflowGuidance } from "@/lib/workflow-insights"
 import type {
   CreatedTable,
   DatabaseConfig,
@@ -27,6 +29,7 @@ import type {
   OperationResult,
   ParsedWorkbook,
   SheetInput,
+  TableCreationOutcome,
 } from "@/lib/types"
 import { formatBytes } from "@/lib/utils"
 
@@ -40,16 +43,19 @@ export default function ImportPage() {
   const [queue, setQueue] = useState<SheetInput[]>([])
   const [created, setCreated] = useState<CreatedTable[]>([])
   const [failed, setFailed] = useState<FailedTable[]>([])
+  const [outcomes, setOutcomes] = useState<TableCreationOutcome[]>([])
   const [result, setResult] = useState<OperationResult | null>(null)
   const [importDurationMs, setImportDurationMs] = useState(0)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [recentRuns, setRecentRuns] = useState(0)
 
   const maxRunHistory = useAppSettingsStore((state) => state.retention.maxRunHistory)
 
   // Saved connections live in localStorage, so they can only be read on the client.
   useEffect(() => {
     setConnections(ConnectionStorage.getAll())
+    setRecentRuns(RunHistory.getAll().length)
   }, [])
 
   const analyze = useCallback(async () => {
@@ -80,6 +86,7 @@ export default function ImportPage() {
     setQueue([])
     setCreated([])
     setFailed([])
+    setOutcomes([])
     setResult(null)
     setImportDurationMs(0)
     setError(null)
@@ -91,6 +98,7 @@ export default function ImportPage() {
     setQueue([])
     setCreated([])
     setFailed([])
+    setOutcomes([])
     setResult(null)
     setStep(4)
   }, [])
@@ -99,6 +107,7 @@ export default function ImportPage() {
     setQueue(sheets)
     setCreated([])
     setFailed([])
+    setOutcomes([])
     setError(null)
     setStep(5)
   }, [])
@@ -107,14 +116,17 @@ export default function ImportPage() {
     ({
       created: createdTables,
       failed: failedTables,
+      outcomes: tableOutcomes,
       elapsedMs,
     }: {
       created: CreatedTable[]
       failed: FailedTable[]
+      outcomes: TableCreationOutcome[]
       elapsedMs: number
     }) => {
       setCreated(createdTables)
       setFailed(failedTables)
+      setOutcomes(tableOutcomes)
       setImportDurationMs(elapsedMs)
 
       if (createdTables.length === 0) {
@@ -142,14 +154,44 @@ export default function ImportPage() {
     setStep(7)
   }, [connection, created, failed, importDurationMs, maxRunHistory])
 
+  const totals = useMemo(() => {
+    const sheets = workbook?.files.reduce((count, file) => count + file.sheets.length, 0) ?? 0
+    const rows =
+      workbook?.files.reduce(
+        (count, file) => count + file.sheets.reduce((sheetRows, sheet) => sheetRows + sheet.data.length, 0),
+        0,
+      ) ?? 0
+    return { sheets, rows, queuedRows: queue.reduce((count, sheet) => count + sheet.data.length, 0) }
+  }, [queue, workbook])
+
   const stats = useMemo(
     () => [
       { label: "Files", value: files.length },
-      { label: "Sheets", value: workbook?.files.reduce((total, file) => total + file.sheets.length, 0) ?? 0 },
-      { label: "Rows", value: workbook?.files.reduce((total, file) => total + file.sheets.reduce((rows, sheet) => rows + sheet.data.length, 0), 0) ?? 0 },
+      { label: "Sheets", value: totals.sheets },
+      { label: "Rows", value: totals.rows },
       { label: "Tables", value: created.length },
     ],
-    [created.length, files.length, workbook],
+    [created.length, files.length, totals],
+  )
+
+  const guidance = useMemo(
+    () =>
+      buildWorkflowGuidance({
+        step,
+        files: files.length,
+        sheets: totals.sheets,
+        rows: totals.rows,
+        connectionName: connection?.name ?? null,
+        connectionType: connection?.type ?? null,
+        selectedSheets: queue.length,
+        selectedRows: totals.queuedRows,
+        createdTables: created.length,
+        failedTables: failed.length,
+        recentRuns,
+        error,
+        busy: isAnalyzing,
+      }),
+    [connection, created.length, error, failed.length, files.length, isAnalyzing, queue.length, recentRuns, step, totals],
   )
 
   const stage = WORKFLOW_STAGES[step - 1]
@@ -188,6 +230,8 @@ export default function ImportPage() {
                 <StatCard key={stat.label} label={stat.label} value={stat.value.toLocaleString()} />
               ))}
             </StatGrid>
+
+            <WorkflowGuidancePanel guidance={guidance} />
           </div>
         ) : null}
 
@@ -292,11 +336,15 @@ export default function ImportPage() {
 
         {step === 6 && connection ? (
           <>
-            {failed.length > 0 ? (
-              <StatusAlert tone="warning" className="mb-6">
-                {failed.length} of {failed.length + created.length} tables could not be created.{" "}
-                {failed.map((table) => `${table.tableName}: ${table.message}`).join(" · ")}
-              </StatusAlert>
+            {outcomes.length > 0 ? (
+              <div className="mb-6 space-y-2">
+                <p className="text-sm font-medium">Import results</p>
+                {outcomes.map((outcome) => (
+                  <StatusAlert key={outcome.tableName} tone={outcome.success ? "success" : "error"}>
+                    <span className="font-mono text-xs">{outcome.tableName}</span> — {outcome.message}
+                  </StatusAlert>
+                ))}
+              </div>
             ) : null}
             <TablePreviewInterface
               databaseConfig={connection}

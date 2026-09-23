@@ -1,4 +1,5 @@
 import { analyseSql } from "@/lib/guardrails"
+import { isBlankCell } from "@/lib/import-execution"
 import { sanitizeTableName } from "@/lib/schema"
 import { errorMessage } from "@/lib/utils"
 import type {
@@ -8,6 +9,7 @@ import type {
   DatabaseConfig,
   DatabaseTable,
   GridColumn,
+  InsertBatchOutcome,
   QueryResult,
   RowMutation,
   ServerOptions,
@@ -195,10 +197,81 @@ export async function createTable(config: DatabaseConfig, tableConfig: TableCrea
   await withSession(config, (session) => session.query(createTableSql(dialect, tableConfig.tableName, tableConfig)))
 }
 
+/** How one insert is cut into transactions. `batchSize: 0` means a single one. */
+export interface InsertBatchOptions {
+  batchSize: number
+  continueOnBatchError: boolean
+  /** Drop rows whose every cell is blank — trailing Excel rows, usually. */
+  skipEmptyRows: boolean
+}
+
 /**
- * Inserts every row in one transaction. Values are passed through untouched:
- * NULL stays NULL, and a NOT NULL violation aborts the whole batch rather than
- * silently dropping rows or inventing placeholder values.
+ * Inserts every row, in chunks, over one session — one transaction per chunk.
+ *
+ * Chunking is what makes a large import survivable: a chunk that fails costs
+ * only its own rows, and with `continueOnBatchError` the chunks after it still
+ * run. `batchSize: 0` is the original behaviour and stays the default for any
+ * caller that does not ask for batching: one transaction, all or nothing.
+ *
+ * Values are passed through untouched: NULL stays NULL, and a failed chunk is
+ * rolled back rather than having rows silently dropped or invented.
+ *
+ * A batch failure is *reported*, never swallowed — the caller decides whether it
+ * is an error (see `insertData`) or a partial success with telemetry.
+ */
+export async function insertDataInBatches(
+  config: DatabaseConfig,
+  tableName: string,
+  columnNames: string[],
+  rows: unknown[][],
+  options: InsertBatchOptions,
+): Promise<{ insertedRows: number; skippedRows: number; totalBatches: number; batches: InsertBatchOutcome[] }> {
+  assertConnection(config)
+  if (rows.length === 0) return { insertedRows: 0, skippedRows: 0, totalBatches: 0, batches: [] }
+
+  const dialect = dialectFor(config.type)
+  const columns = columnNames.map((column) => dialect.quote(column)).join(", ")
+  const values = columnNames.map((_, index) => dialect.placeholder(index)).join(", ")
+  const statement = `INSERT INTO ${dialect.quote(tableName)} (${columns}) VALUES (${values})`
+
+  const writable = options.skipEmptyRows ? rows.filter((row) => !row.every(isBlankCell)) : rows
+  const skippedRows = rows.length - writable.length
+  const size = options.batchSize > 0 ? options.batchSize : Math.max(writable.length, 1)
+
+  const chunks: unknown[][][] = []
+  for (let start = 0; start < writable.length; start += size) {
+    chunks.push(writable.slice(start, start + size))
+  }
+
+  return withSession(config, async (session) => {
+    const batches: InsertBatchOutcome[] = []
+    let insertedRows = 0
+
+    for (const [index, chunk] of chunks.entries()) {
+      try {
+        let written = 0
+        await session.transaction(async (query) => {
+          for (const row of chunk) {
+            await query(statement, row)
+            written += 1
+          }
+        })
+        insertedRows += written
+        batches.push({ batch: index + 1, rows: chunk.length, insertedRows: written })
+      } catch (error) {
+        batches.push({ batch: index + 1, rows: chunk.length, insertedRows: 0, error: errorMessage(error) })
+        if (!options.continueOnBatchError) break
+      }
+    }
+
+    return { insertedRows, skippedRows, totalBatches: chunks.length, batches }
+  })
+}
+
+/**
+ * Inserts every row in one transaction, throwing on the first failure. This is
+ * the contract every earlier caller has: a NOT NULL violation aborts the whole
+ * batch rather than leaving part of it behind.
  */
 export async function insertData(
   config: DatabaseConfig,
@@ -206,25 +279,16 @@ export async function insertData(
   columnNames: string[],
   rows: unknown[][],
 ): Promise<{ insertedRows: number }> {
-  assertConnection(config)
-  if (rows.length === 0) return { insertedRows: 0 }
-
-  const dialect = dialectFor(config.type)
-  const columns = columnNames.map((column) => dialect.quote(column)).join(", ")
-  const values = columnNames.map((_, index) => dialect.placeholder(index)).join(", ")
-  const statement = `INSERT INTO ${dialect.quote(tableName)} (${columns}) VALUES (${values})`
-
-  return withSession(config, async (session) => {
-    let insertedRows = 0
-    await session.transaction(async (query) => {
-      for (const row of rows) {
-        if (row.every((cell) => cell === null || cell === undefined || cell === "")) continue
-        await query(statement, row)
-        insertedRows += 1
-      }
-    })
-    return { insertedRows }
+  const result = await insertDataInBatches(config, tableName, columnNames, rows, {
+    batchSize: 0,
+    continueOnBatchError: false,
+    skipEmptyRows: true,
   })
+
+  const failure = result.batches.find((batch) => batch.error)
+  if (failure) throw new Error(failure.error)
+
+  return { insertedRows: result.insertedRows }
 }
 
 /**

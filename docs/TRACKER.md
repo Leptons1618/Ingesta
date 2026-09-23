@@ -1,7 +1,8 @@
 # Refactor tracker
 
 Working notes for the cleanup that replaced the map-onto-existing-table flow with a single
-"one sheet, one new table" pipeline, and for the workspace expansion that followed it. Facts only;
+"one sheet, one new table" pipeline, for the workspace expansion that followed it, and for the UI
+foundation pass after that. Facts only;
 the reasoning behind the decisions is in [ARCHITECTURE.md](ARCHITECTURE.md) and
 [WORKSPACE.md](WORKSPACE.md).
 
@@ -128,8 +129,9 @@ everything else is new.
 - [x] `lib/data-mapper.ts` and `lib/sql-generator.ts` deleted — the map-onto-existing-table and SQL
   generation paths, along with `components/data-mapping-interface.tsx` and
   `components/sql-generation-interface.tsx`.
-- [x] `lib/workflow-insights.ts` deleted — a readiness-score and recommendation helper that scored
-  `sheetsToMap` and the mapping step that no longer exist.
+- [x] The first `lib/workflow-insights.ts` deleted — a readiness-score and recommendation helper that
+  scored `sheetsToMap` and the mapping step that no longer exist. A new one, scoring the seven stages
+  that do exist, was added later; see **Import execution and guidance** below.
 - [x] `lib/operation-tracker.ts` deleted. It contained `generateMockResult()`, which fabricated
   `executionTimeMs`, record counts and warnings from `Math.random()`; the run summary now comes
   from `buildRunResult` in `lib/storage.ts`, built from measured values.
@@ -205,6 +207,171 @@ everything else is new.
 - [x] `package-lock.json` removed; pnpm is the only package manager (`packageManager` in
   `package.json`).
 
+## UI foundation pass
+
+A pass over the visual layer: fonts, colour tokens, placeholder and scrollbar treatment, and the
+framework boundaries the app was missing. No pipeline contract changed.
+
+### Fonts
+
+- [x] **`font-mono` never rendered in Geist Mono.** `app/layout.tsx` assigned `GeistSans.variable`
+  and `GeistMono.variable` — the class names `next/font` generates — to `--font-sans` and
+  `--font-mono` inside an inline `<style>`. A class name is not a font family, so every `font-mono`
+  element (SQL console, table and column names, ids, the `⌘K` hint) fell back to the browser's
+  default font. Measured in the browser: a probe string rendered 317.31px, exactly the serif width
+  and not the generic monospace width (343.08px), while the `GeistMono` face was `unloaded` — it had
+  never been requested.
+- [x] **One font source.** The generated classes now sit on `<html>`, the inline `<style>` is gone,
+  and `@theme inline` maps `--font-sans: var(--font-geist-sans)` / `--font-mono: var(--font-geist-mono)`,
+  which is what `font-sans`, `font-mono` and preflight's `--default-font-family` read. The same probe
+  now measures 374.41px — the Geist Mono width — and both faces report `loaded`.
+
+### Colour tokens
+
+- [x] **Placeholders read as real text.** Light `--muted-foreground` was `oklch(0.35 0 0)`, the exact
+  value of `--foreground`, and `placeholder:text-muted-foreground` is what every input uses, so a
+  placeholder was indistinguishable from an entered value. It is now `oklch(0.52 0 0)` — 5.51:1 on
+  white, a full step lighter than `--foreground`. Tailwind's preflight already sets
+  `::placeholder { opacity: 1 }`, so the token was the whole bug.
+- [x] **Input borders were invisible in light mode.** `--input` was `oklch(1 0 0)`, i.e. the page
+  background, so inputs and the unchecked switch track had no boundary at all. It is now
+  `oklch(0.78 0 0)` (2.0:1 on white). `--border` is untouched, so panels and dividers keep their
+  weight.
+- [x] **Focus rings rendered at a quarter strength.** `--ring` carried its own `/ 0.5` and every
+  utility (`ring-ring/50`, `outline-ring/50`) applies another 50%. The token is opaque now; the
+  utilities own the alpha.
+- [x] **`--muted` was equal to `--card`.** Muted surfaces — badges, `kbd`, hover fills, zebra rows —
+  were invisible on a card. Light `--muted` is now `oklch(0.955 0 0)`.
+- [x] **Selected text was unreadable in dark mode.** `::selection` mixed the primary toward white and
+  kept `--foreground`, so dark mode produced near-white text on a pale band. It is now a 35% primary
+  tint over whatever surface it lands on, with the same text colour.
+- [x] **Every preset failed on its own label.** The presets set `--primary`/`--secondary`/`--accent`
+  but not their foregrounds, so they inherited white: solaris at L 0.72 measured 2.44:1, dracula
+  3.24:1, warm 3.34:1, ocean 3.40:1, the `light` preset 3.93:1. Each preset now carries the
+  foreground its lightness needs — near-black on the bright palettes (4.6:1 to 8:1), white on the
+  `light` preset, which was darkened to L 0.55 to clear 4.84:1 — and `light` also gets a dark-mode
+  pair (`:root.dark[data-theme-preset="light"]`), because the blue that holds white labels on a light
+  page is too dark to read as `text-primary` on the dark one. Defaults: light `--primary` moved
+  0.55 → 0.53 (4.19 → 4.53:1 with its white label), `--secondary`/`--accent` keep the orange and take
+  near-black labels (3.53 → 5.57:1), `--destructive` moved 0.6 → 0.58 (4.39 → 4.65:1).
+- [x] Deliberate ceiling: input borders sit at 2.0:1 in light and 1.44:1 in dark, below the 3:1 WCAG
+  1.4.11 asks of essential boundaries. The app's border language is flat — `--border` itself is
+  1.6:1 — and clearing 3:1 would mean an input edge darker than every other edge in the UI, which is
+  a redesign rather than a fix. The focus ring carries the affordance instead.
+
+### Scrollbars
+
+- [x] No scrollbar styling existed anywhere, so the platform default (a 17px bar with a grey track on
+  Windows) sat inside every panel. `html` now sets `scrollbar-width: thin` and
+  `scrollbar-color: var(--scrollbar-thumb) transparent`; both properties inherit, so one declaration
+  covers every scroll container. The `::-webkit-scrollbar*` pseudo-elements cover the engines that
+  ignore the standard properties — Chrome ≥121 applies the standard pair and ignores them, so the two
+  spellings are complementary rather than duplicates. The Radix scroll-area thumb in
+  `components/ui/scroll-area.tsx` uses the same two tokens.
+
+### Boundaries
+
+- [x] `app/loading.tsx` — a skeleton of the page chrome, rendered inside the shell so the navigation
+  stays usable while a segment resolves.
+- [x] `app/error.tsx` — route error boundary: message, digest, `reset`, and a link home.
+- [x] `app/global-error.tsx` — replaces the document when the root layout fails; it imports nothing
+  from the app and uses inline styles, so the failure that took the shell down cannot take this down
+  too.
+- [x] `app/not-found.tsx` — unknown routes.
+
+### Verified in a browser
+
+- [x] Fonts: the computed `font-family` of a `.font-mono` probe is the Geist Mono stack, its measured
+  width (374.41px) matches Geist Mono rather than the serif (317.31px) or generic monospace
+  (343.08px) fallbacks, and `document.fonts` reports `GeistSans|loaded` and `GeistMono|loaded` — in
+  the production build as well as in dev.
+- [x] Tokens: the computed `::placeholder` colour is `oklch(0.52 0 0)` against a value colour of
+  `oklch(0.35 0 0)`, the search field's border is `oklch(0.78 0 0)`, and `scrollbar-width`/`scrollbar-color`
+  resolve to `thin` and the thumb token, in both light and dark.
+- [x] All twelve preset × mode combinations resolve to the intended pair, including the dark-scoped
+  `light` preset, read back from the cascade with each `data-theme-preset` value.
+- [x] `app/loading.tsx` rendered for real: a temporary route that suspended for six seconds showed
+  `aria-busy="true"` and eight skeleton blocks inside a live shell, then the content.
+- [x] `app/error.tsx` rendered for real against a temporary route that always threw: `role="alert"`,
+  the message, the digest, `Try again` and `Back to dashboard`.
+- [x] `app/global-error.tsx` rendered for real against a temporary throw in `app/layout.tsx`: the
+  standalone document appeared with no shell around it. Both probe routes were deleted and the throw
+  reverted before the build.
+- [x] `app/not-found.tsx` renders for an unknown path in dev and in the production build.
+- [x] Scrollbar *painting* is not observable here: the managed headless browser uses overlay
+  scrollbars, which reserve no layout space and ignore `::-webkit-scrollbar` (measured: the same 0px
+  whether `scrollbar-width` is `auto`, `thin` or `none`). The rules are asserted from the served
+  stylesheet instead; on such platforms the native overlay bar is the correct result anyway.
+
+## Import execution and guidance
+
+The brief in [UX_SCALABILITY_UPGRADE.md](UX_SCALABILITY_UPGRADE.md) was written against an older tree
+(its paths are `/home/runner/work/Ingesta/Ingesta/...`, and its insert route no longer exists). This
+is that brief applied to this tree: an execution policy the operator controls, batched inserts with
+telemetry at the API boundary, and a guidance layer over the wizard's own state.
+
+### The insert policy
+
+- [x] `lib/import-execution.ts` owns it: `DEFAULT_INSERT_EXECUTION` (500-row batches, NULL blanks,
+  empty rows skipped, no trimming, type conversion on, stop at the first failed batch),
+  `normalizeInsertExecution` (absent means `batchSize: 0`, i.e. one transaction) and
+  `prepareInsertRows` (trim, `blankCells: "skip-row"`, coercion against the column types).
+- [x] **A blank cell is never invented into a value.** The removed `handleNulls: "default"` behaviour
+  (blank → `0`, `false`, today's date) is not reachable from this policy: a blank stays NULL, or the
+  whole row is dropped when the operator asks for that and nothing else.
+- [x] `insertDataInBatches` in `lib/db/index.ts` is the only chunking implementation: one session,
+  one transaction per chunk, a per-chunk outcome, and `skipEmptyRows` as a parameter of the statement
+  builder. That last part matters — the rule that drops trailing blank rows had lived inside
+  `insertData`, where it would have overridden the option. `insertData` now delegates with
+  `batchSize: 0` and rethrows the first batch error, so its contract (one transaction, throws on
+  failure) is byte-for-byte what it was.
+- [x] The route normalizes, prepares and reports: `insertedRows`, `skippedRows`, `totalBatches`,
+  `processedBatches`, `failedBatches`, `batchErrors`, `warnings`, `durationMs`. A failed batch is a
+  500 carrying the same telemetry — `lib/http.ts` gained a `RouteFailure` for exactly that, so a
+  partial run can say `1 of 3 batches failed · 2 rows were written · stopped at batch 2 · <engine
+  message>` instead of throwing the numbers away.
+- [x] `postJson` keeps a failure body as `partial`, and `unwrap` drops it deliberately: a failure body
+  is not shaped like the success payload, so picking fields out of it would hand callers half a value.
+  `lib/push.ts` forwards `{ ok: false, error }` explicitly for the same reason.
+
+### The wizard
+
+- [x] `components/table-creation-interface.tsx` gained the execution panel — batch size, blank-cell
+  handling, four toggles — with a line that states the consequence of the current choice, and sends
+  the policy, the column types and the rows with every insert.
+- [x] The success message *is* the measurement: `Created "orders_skip" with 1,197 rows · 3 of 3
+  batches · 3 skipped · 3.45s. 3 rows skipped because a cell was empty: row 400, row 800, row 1200.`
+- [x] `CreatedTable.rowCount` is the inserted count now, not the sheet's row count, so the run summary
+  reports what landed (1,197) rather than what was queued (1,200).
+- [x] **Dead UI removed.** The per-sheet outcome list lived inside the table step, but the page moves
+  to Verify the moment the loop ends and going back re-mounts the component — the list could not be
+  reached. The outcomes are `TableCreationOutcome[]` on the page now, rendered at the Verify step
+  where the user lands, replacing the failure-only alert that said less.
+
+### Guidance
+
+- [x] `lib/workflow-insights.ts` scores the seven stages that exist: readiness is a weighted milestone
+  list (files 10, analysis 15, connection 15, sheets 20, tables 25, recorded run 15), blockers are
+  stage-aware plus the two that outrank them (a failed sheet, a busy step), and recommendations come
+  from state the page already holds — a queue over 5,000 rows is told to set a batch size.
+- [x] `components/workflow-guidance.tsx` renders it; `app/import/page.tsx` builds the snapshot and
+  reads the run count from `RunHistory` on mount.
+
+### Verified
+
+- [x] `bun scripts/check-import-execution.ts`, wired into `pnpm check`: policy defaults and clamping,
+  trimming, coercion, `skip-row`, and the real route against SQLite — no execution options is one
+  transaction that leaves nothing behind after a `NOT NULL` violation; `batchSize: 2` over six rows
+  with a bad row in the second batch stops there with 2 rows committed, `totalBatches: 3`,
+  `failedBatches: 1`; with `continueOnBatchError` the third batch still lands; `skipEmptyRows: false`
+  writes the blank row; guidance scores 0, 25 and 100 for an empty, an analysed and a finished run.
+- [x] A real 1,200-row workbook through the browser: uploaded, analysed, imported into a throwaway
+  SQLite file with the panel set to `blank cells: skip row` and the default 500-row batches. The
+  Verify step reported `1,197 rows · 3 of 3 batches · 3 skipped · 3.45s` and named rows 400, 800 and
+  1200; the run summary reported `RECORDS PROCESSED 1,197`; the database file holds 1,197 rows with
+  `order_id 400` absent, `amount` stored as REAL (the server-side conversion), and `notes` still
+  `"  padded  "` — trimming was off, which is what the panel said it was.
+
 ## Verification
 
 - [x] `pnpm check:types` — `tsc --noEmit` over the app and over `scripts/`, zero diagnostics.
@@ -249,10 +416,15 @@ Each of these is a deliberate ceiling with a known upgrade path.
   per table, so listing a schema with hundreds of tables costs hundreds of round trips. Upgrade:
   read the engine's estimate (`pg_class.reltuples`, `information_schema.tables.table_rows`, a
   SQLite `dbstat` scan), or drop row counts from the connection list entirely.
-- **Inserts are one statement per row inside a single transaction.** Correct and atomic, not fast:
-  every row is a separate round trip. Upgrade: multi-row `INSERT ... VALUES (...), (...)` batches,
-  or the engine's bulk path — `COPY` on PostgreSQL, `LOAD DATA` on MySQL, `bulk` on SQL Server,
-  a prepared statement loop for SQLite.
+- **Inserts are one statement per row.** Correct, and atomic per transaction, but not fast: every row
+  is a separate round trip. A batch size bounds how much one failure costs — each batch is its own
+  transaction — but it does not make the statements multi-row. Upgrade: multi-row
+  `INSERT ... VALUES (...), (...)` batches, or the engine's bulk path — `COPY` on PostgreSQL,
+  `LOAD DATA` on MySQL, `bulk` on SQL Server, a prepared statement loop for SQLite.
+- **Batching trades atomicity for reach.** With a batch size set, batches that already committed stay
+  committed when a later one fails. The response reports exactly how many rows landed and which batch
+  failed, and the sheet is reported as failed — but the table is left partially filled, and nothing
+  rolls those rows back automatically.
 - **The whole sheet is held in browser memory and posted as one JSON body.** Large sheets mean a
   large string in the browser and a large request body. Upgrade: chunk the rows across several
   insert calls, or parse the file server-side and stream.
@@ -287,8 +459,11 @@ Each of these is a deliberate ceiling with a known upgrade path.
 
 Only work that follows from the limitations above.
 
-- [ ] Batch inserts per table once row counts justify it (multi-row `VALUES`, or the engine bulk
-  API), keeping the per-table transaction.
+- [ ] Make the insert multi-row once row counts justify it (`VALUES (...), (...)`, or the engine bulk
+  API). Batching is in: the rows are already cut into per-batch transactions, so this is the statement
+  shape inside a batch, not the transaction boundary.
+- [ ] Offer a retry of only the failed batch after a partial insert, instead of leaving the operator to
+  re-run the sheet and reconcile the rows that landed.
 - [ ] Replace per-table `COUNT(*)` with an estimate, or make row counts opt-in in the connection
   list.
 - [ ] Chunk large sheets instead of holding them in memory and posting one body.

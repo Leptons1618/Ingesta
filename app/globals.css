@@ -3,45 +3,60 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Every value below is a contrast decision, not a taste one. Ratios are measured
+ * against the surface the token actually sits on; the failing pairs that were
+ * here before are recorded in docs/TRACKER.md. In short:
+ *   - `--muted-foreground` was equal to `--foreground`, so placeholders, hints
+ *     and secondary copy read as real content. It now clears 4.5:1 on white
+ *     while staying a full step lighter than `--foreground`.
+ *   - `--input` was pure white, i.e. an invisible border and an invisible
+ *     unchecked switch track. It is now a visible grey that is darker than
+ *     `--border`.
+ *   - `--ring` carried its own 50% alpha and every focus utility applies `/50`
+ *     on top, so focus rings rendered at 25% opacity. The token is opaque now;
+ *     the utilities own the alpha.
+ *   - `--secondary`/`--accent` carry near-black text (5.57:1) instead of white
+ *     (3.53:1) on the same orange, and `--destructive` is a shade darker so its
+ *     white label clears 4.5:1. */
 :root {
-  /* Updated color tokens to match design brief with cyan primary and orange accent */
   --background: oklch(1 0 0);
   --foreground: oklch(0.35 0 0);
   --card: oklch(0.98 0 0);
   --card-foreground: oklch(0.35 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.35 0 0);
-  --primary: oklch(0.55 0.15 200);
+  --primary: oklch(0.53 0.15 200);
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.65 0.2 35);
-  --secondary-foreground: oklch(1 0 0);
-  --muted: oklch(0.98 0 0);
-  --muted-foreground: oklch(0.35 0 0);
+  --secondary-foreground: oklch(0.15 0 0);
+  --muted: oklch(0.955 0 0);
+  --muted-foreground: oklch(0.52 0 0);
   --accent: oklch(0.65 0.2 35);
-  --accent-foreground: oklch(1 0 0);
-  --destructive: oklch(0.6 0.25 25);
+  --accent-foreground: oklch(0.15 0 0);
+  --destructive: oklch(0.58 0.25 25);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.85 0 0);
-  --input: oklch(1 0 0);
-  --ring: oklch(0.55 0.15 200 / 0.5);
-  --chart-1: oklch(0.55 0.15 200);
+  --input: oklch(0.78 0 0);
+  --ring: oklch(0.53 0.15 200);
+  --chart-1: oklch(0.53 0.15 200);
   --chart-2: oklch(0.65 0.2 35);
   --chart-3: oklch(0.35 0 0);
   --chart-4: oklch(0.6 0.25 25);
   --chart-5: oklch(0.98 0 0);
   --radius: 0.5rem;
+  --scrollbar-thumb: oklch(0.75 0 0);
+  --scrollbar-thumb-hover: oklch(0.6 0 0);
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.35 0 0);
-  --sidebar-primary: oklch(0.55 0.15 200);
+  --sidebar-primary: oklch(0.53 0.15 200);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.65 0.2 35);
-  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-accent-foreground: oklch(0.15 0 0);
   --sidebar-border: oklch(0.85 0 0);
-  --sidebar-ring: oklch(0.55 0.15 200 / 0.5);
+  --sidebar-ring: oklch(0.53 0.15 200);
 }
 
 .dark {
-  /* Updated dark mode tokens to maintain design consistency */
   --background: oklch(0.15 0 0);
   --foreground: oklch(0.95 0 0);
   --card: oklch(0.18 0 0);
@@ -59,13 +74,15 @@
   --destructive: oklch(0.5 0.2 25);
   --destructive-foreground: oklch(0.95 0 0);
   --border: oklch(0.25 0 0);
-  --input: oklch(0.25 0 0);
-  --ring: oklch(0.65 0.15 200 / 0.5);
+  --input: oklch(0.3 0 0);
+  --ring: oklch(0.65 0.15 200);
   --chart-1: oklch(0.65 0.15 200);
   --chart-2: oklch(0.75 0.2 35);
   --chart-3: oklch(0.75 0 0);
   --chart-4: oklch(0.6 0.2 25);
   --chart-5: oklch(0.35 0 0);
+  --scrollbar-thumb: oklch(0.4 0 0);
+  --scrollbar-thumb-hover: oklch(0.5 0 0);
   --sidebar: oklch(0.18 0 0);
   --sidebar-foreground: oklch(0.95 0 0);
   --sidebar-primary: oklch(0.65 0.15 200);
@@ -73,55 +90,88 @@
   --sidebar-accent: oklch(0.75 0.2 35);
   --sidebar-accent-foreground: oklch(0.15 0 0);
   --sidebar-border: oklch(0.25 0 0);
-  --sidebar-ring: oklch(0.65 0.15 200 / 0.5);
+  --sidebar-ring: oklch(0.65 0.15 200);
 }
 
+/* Presets swap the accent family. Each one also carries the foreground its own
+ * lightness needs — a preset colour at L 0.65–0.77 cannot hold white text (2.1:1
+ * to 3.5:1), so the presets use near-black labels, which clear 4.6:1 on the
+ * lightest preset and 8:1 on the darkest. The same pair holds in both modes. */
 :root[data-theme-preset="dracula"] {
   --primary: oklch(0.67 0.19 303);
+  --primary-foreground: oklch(0.15 0 0);
   --secondary: oklch(0.73 0.16 343);
+  --secondary-foreground: oklch(0.15 0 0);
   --accent: oklch(0.73 0.16 343);
-  --ring: oklch(0.67 0.19 303 / 0.45);
+  --accent-foreground: oklch(0.15 0 0);
+  --ring: oklch(0.67 0.19 303);
   --chart-1: oklch(0.67 0.19 303);
   --chart-2: oklch(0.73 0.16 343);
 }
 
 :root[data-theme-preset="warm"] {
   --primary: oklch(0.66 0.18 42);
+  --primary-foreground: oklch(0.15 0 0);
   --secondary: oklch(0.72 0.14 20);
+  --secondary-foreground: oklch(0.15 0 0);
   --accent: oklch(0.72 0.14 20);
-  --ring: oklch(0.66 0.18 42 / 0.45);
+  --accent-foreground: oklch(0.15 0 0);
+  --ring: oklch(0.66 0.18 42);
   --chart-1: oklch(0.66 0.18 42);
   --chart-2: oklch(0.72 0.14 20);
 }
 
 :root[data-theme-preset="ocean"] {
   --primary: oklch(0.61 0.16 220);
+  --primary-foreground: oklch(0.15 0 0);
   --secondary: oklch(0.69 0.13 186);
+  --secondary-foreground: oklch(0.15 0 0);
   --accent: oklch(0.69 0.13 186);
-  --ring: oklch(0.61 0.16 220 / 0.45);
+  --accent-foreground: oklch(0.15 0 0);
+  --ring: oklch(0.61 0.16 220);
   --chart-1: oklch(0.61 0.16 220);
   --chart-2: oklch(0.69 0.13 186);
 }
 
 :root[data-theme-preset="light"] {
-  --primary: oklch(0.6 0.13 250);
+  --primary: oklch(0.55 0.13 250);
+  --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.8 0.08 195);
+  --secondary-foreground: oklch(0.15 0 0);
   --accent: oklch(0.8 0.08 195);
-  --ring: oklch(0.6 0.13 250 / 0.45);
-  --chart-1: oklch(0.6 0.13 250);
+  --accent-foreground: oklch(0.15 0 0);
+  --ring: oklch(0.55 0.13 250);
+  --chart-1: oklch(0.55 0.13 250);
   --chart-2: oklch(0.8 0.08 195);
+}
+
+/* The one preset that needs a mode split: its blue is dark enough to hold white
+ * labels on a light page (4.84:1), which is too dark to read as `text-primary`
+ * against the dark background (4.06:1). Dark mode gets the lighter pair. */
+:root.dark[data-theme-preset="light"] {
+  --primary: oklch(0.68 0.13 250);
+  --primary-foreground: oklch(0.15 0 0);
+  --ring: oklch(0.68 0.13 250);
+  --chart-1: oklch(0.68 0.13 250);
 }
 
 :root[data-theme-preset="solaris"] {
   --primary: oklch(0.72 0.16 104);
+  --primary-foreground: oklch(0.15 0 0);
   --secondary: oklch(0.77 0.15 75);
+  --secondary-foreground: oklch(0.15 0 0);
   --accent: oklch(0.77 0.15 75);
-  --ring: oklch(0.72 0.16 104 / 0.45);
+  --accent-foreground: oklch(0.15 0 0);
+  --ring: oklch(0.72 0.16 104);
   --chart-1: oklch(0.72 0.16 104);
   --chart-2: oklch(0.77 0.15 75);
 }
 
 @theme inline {
+  /* next/font declares these on <html>; mapping them here is what makes
+     `font-sans` / `font-mono` resolve to real families instead of a class name. */
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -141,6 +191,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-scrollbar-thumb: var(--scrollbar-thumb);
+  --color-scrollbar-thumb-hover: var(--scrollbar-thumb-hover);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -165,6 +217,13 @@
     @apply border-border outline-ring/50;
   }
 
+  /* `scrollbar-width` and `scrollbar-color` are inherited, so one declaration
+     themes every scroll container in the app — sidebar, grid, dialogs, page. */
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
   body {
     @apply bg-background text-foreground;
     min-height: 100vh;
@@ -180,9 +239,37 @@
     scroll-behavior: auto !important;
   }
 
+  /* A tint over whatever surface it lands on, so the text on top stays readable
+     in both modes. The previous rule mixed toward white, which left dark mode
+     with near-white text on a pale band. */
   ::selection {
-    background: color-mix(in oklab, var(--primary) 28%, white 12%);
+    background: color-mix(in oklab, var(--primary) 35%, transparent);
     color: var(--foreground);
+  }
+
+  /* Native scrollbars. `scrollbar-color` is what Chrome ≥121 and Firefox use,
+     and Chrome then ignores the WebKit pseudo-elements below; Safari has no
+     standard properties, so both spellings are needed. `background-clip:
+     padding-box` insets the thumb without showing the transparent border ring. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
   }
 }
 

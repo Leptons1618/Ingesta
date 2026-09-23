@@ -94,15 +94,26 @@ Lists the tables in the connected database, with columns and a row count.
 
 ### POST /api/insert-data
 
-Inserts the rows for one table in a single transaction.
+Inserts the rows for one table. Without `execution` it is one transaction; with it, the rows are cut
+into `batchSize` chunks and each chunk is its own transaction.
 
-- **Request body:** `{ config, tableName, columnNames: string[], data: unknown[][] }` — `data` is
-  already transformed by `transformDataRows` (or `gridToRows`), and each row is positional against
-  `columnNames`.
-- **Success payload:** `{ insertedRows: number }` — rows that are entirely null are skipped and not
-  counted.
-- **Errors:** 500 when a value violates a constraint. The transaction rolls back, so the table keeps
-  the rows it had before the call. NULL is bound as NULL; blanks are not rewritten to `''`.
+- **Request body:** `{ config, tableName, columnNames: string[], data: unknown[][], columnTypes?: string[], execution?: InsertExecutionOptions }`
+  — `data` is already transformed by `transformDataRows` (or `gridToRows`), and each row is positional
+  against `columnNames`. `columnTypes` is index-aligned with `columnNames` and is only read when
+  `execution.convertTypes` is on.
+- **`execution`:** `{ batchSize, blankCells: "null" | "skip-row", skipEmptyRows, trimStrings, convertTypes, continueOnBatchError }`.
+  Absent means `batchSize: 0` — one transaction, the behaviour every earlier caller has.
+  `batchSize` is clamped to 5000. `blankCells: "skip-row"` drops a row that has any blank cell;
+  a blank cell is otherwise bound as NULL, never as `0`, `false` or a date.
+- **Success payload:** `{ insertedRows, skippedRows, totalBatches, processedBatches, failedBatches, batchErrors, warnings, durationMs }`
+  — `totalBatches` is how many chunks the rows were cut into, `processedBatches` how many committed.
+  Rows that are entirely null are skipped (unless `skipEmptyRows` is off) and counted in `skippedRows`.
+- **Errors:** 500 when a value violates a constraint. With one transaction the table keeps the rows it
+  had before the call. With batching, the batches that already committed stay — the failure body
+  carries the same telemetry fields, so a caller can report how many rows landed and which batch
+  failed.
+- **Backward compatibility:** a request with only `config`, `tableName`, `columnNames` and `data`
+  behaves exactly as before, including the all-or-nothing transaction.
 
 ### POST /api/preview-table
 

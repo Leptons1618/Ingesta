@@ -5,6 +5,8 @@ import type {
   DatabaseColumn,
   DatabaseConfig,
   DatabaseTable,
+  InsertExecutionOptions,
+  InsertReport,
   QueryResult,
   RowMutation,
   ServerOptions,
@@ -13,7 +15,13 @@ import type {
 } from "@/lib/types"
 import { errorMessage } from "@/lib/utils"
 
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
+/**
+ * A route that failed may still report what it managed to do — a partial insert
+ * knows how many rows landed before the batch that failed — so a failure carries
+ * the raw body as a best-effort partial. It is typed `Partial<T>` because a
+ * failure body is not guaranteed to hold every success field.
+ */
+export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; partial?: Partial<T> }
 
 /**
  * Every API route answers with `{ success, ... }`. This turns both transport
@@ -31,7 +39,11 @@ export async function postJson<T>(path: string, body: unknown): Promise<ApiResul
 
     if (!payload) return { ok: false, error: `Request to ${path} failed (${response.status})` }
     if (!response.ok || payload.success === false) {
-      return { ok: false, error: payload.message ?? `Request to ${path} failed (${response.status})` }
+      return {
+        ok: false,
+        error: payload.message ?? `Request to ${path} failed (${response.status})`,
+        partial: payload,
+      }
     }
 
     return { ok: true, data: payload }
@@ -43,6 +55,10 @@ export async function postJson<T>(path: string, body: unknown): Promise<ApiResul
 /**
  * Routes wrap their answer in `{ success, … }`; callers want the value inside
  * it, so the envelope is unwrapped once, here, and nowhere else.
+ *
+ * The partial from a failure is dropped rather than picked: `pick` reads fields
+ * the failure body does not have, and a caller of these routes wants the error,
+ * not half a payload.
  */
 async function unwrap<T extends object, P>(
   path: string,
@@ -50,7 +66,7 @@ async function unwrap<T extends object, P>(
   pick: (payload: T) => P,
 ): Promise<ApiResult<P>> {
   const result = await postJson<T>(path, body)
-  return result.ok ? { ok: true, data: pick(result.data) } : result
+  return result.ok ? { ok: true, data: pick(result.data) } : { ok: false, error: result.error }
 }
 
 /** The one client the UI talks to: every call names its route and its payload. */
@@ -73,11 +89,22 @@ export const api = {
   createTable: (config: DatabaseConfig, tableConfig: TableCreationConfig) =>
     unwrap("/api/create-table", { config, tableConfig }, (payload: { message: string }) => payload),
 
-  insertData: (config: DatabaseConfig, tableName: string, columnNames: string[], data: unknown[][]) =>
+  /**
+   * `options.execution` is the batching policy for this table; without it the
+   * insert is one transaction. `options.columnTypes` is what `convertTypes`
+   * coerces against, index-aligned with `columnNames`.
+   */
+  insertData: (
+    config: DatabaseConfig,
+    tableName: string,
+    columnNames: string[],
+    data: unknown[][],
+    options: { execution?: Partial<InsertExecutionOptions>; columnTypes?: string[] } = {},
+  ) =>
     unwrap(
       "/api/insert-data",
-      { config, tableName, columnNames, data },
-      (payload: { insertedRows: number }) => payload,
+      { config, tableName, columnNames, data, ...options },
+      (payload: InsertReport) => payload,
     ),
 
   previewTable: (config: DatabaseConfig, tableName: string, options: PreviewOptions = {}) =>

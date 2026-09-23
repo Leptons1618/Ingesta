@@ -80,6 +80,52 @@ export interface TableCreationConfig {
   primaryKey?: string
 }
 
+/**
+ * How one table's rows are written. Absent from a request means the behaviour
+ * every earlier caller already had: one transaction for the whole insert.
+ *
+ * The policy is deliberately about *execution*, not about the data model: it
+ * decides how a blank cell is treated, whether values are coerced to the column
+ * types, and how the rows are cut into transactions. Nothing here invents a
+ * value for a missing one — a blank cell stays NULL unless the operator asks for
+ * the row to be dropped instead.
+ */
+export interface InsertExecutionOptions {
+  /** Rows per transaction. `0` keeps the whole insert in a single transaction. */
+  batchSize: number
+  /** A row with any blank cell: keep it as NULL, or drop the row. */
+  blankCells: "null" | "skip-row"
+  /** Drop rows whose every cell is blank, which is how trailing Excel rows go. */
+  skipEmptyRows: boolean
+  /** Trim surrounding whitespace from text cells before they are written. */
+  trimStrings: boolean
+  /** Coerce each cell to the type its column declares. */
+  convertTypes: boolean
+  /** Keep going after a batch fails instead of stopping the run at that batch. */
+  continueOnBatchError: boolean
+}
+
+/** One chunk of rows, as it actually ran. */
+export interface InsertBatchOutcome {
+  /** 1-based, in the order the batches ran. */
+  batch: number
+  rows: number
+  insertedRows: number
+  error?: string
+}
+
+/** What the insert route answers with. `insertedRows` is the field older callers read. */
+export interface InsertReport {
+  insertedRows: number
+  skippedRows: number
+  totalBatches: number
+  processedBatches: number
+  failedBatches: number
+  batchErrors: Array<{ batch: number; rows: number; message: string }>
+  warnings: string[]
+  durationMs: number
+}
+
 export interface ExcelSheet {
   name: string
   /** Header labels, one per column. */
@@ -114,6 +160,17 @@ export interface FailedTable {
   tableName: string
   fileName: string
   sheetName: string
+  message: string
+}
+
+/**
+ * What happened to one sheet in the create-and-insert loop, in the words the
+ * operator reads. A success carries the insert telemetry — rows, batches, time —
+ * and a failure carries the engine's own message.
+ */
+export interface TableCreationOutcome {
+  tableName: string
+  success: boolean
   message: string
 }
 

@@ -45,7 +45,7 @@ export async function pushGrid({
     if (mode === "create") {
       const primaryKey = grid.columns.find((column) => column.isPrimaryKey)?.name
       const created = await api.createTable(config, gridToTableConfig(grid, tableName, primaryKey))
-      if (!created.ok) return created
+      if (!created.ok) return { ok: false, error: created.error }
 
       if (rows.length === 0) return { ok: true, data: { tableName, rowsWritten: 0, created: true } }
 
@@ -61,13 +61,13 @@ export async function pushGrid({
 
     if (mode === "replace") {
       const cleared = await api.truncateTable(config, tableName)
-      if (!cleared.ok) return cleared
+      if (!cleared.ok) return { ok: false, error: cleared.error }
     }
 
     if (rows.length === 0) return { ok: true, data: { tableName, rowsWritten: 0, created: false } }
 
     const inserted = await api.insertData(config, tableName, columnNames, rows)
-    if (!inserted.ok) return inserted
+    if (!inserted.ok) return { ok: false, error: inserted.error }
 
     return { ok: true, data: { tableName, rowsWritten: inserted.data.insertedRows, created: false } }
   } catch (error) {

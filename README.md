@@ -48,10 +48,17 @@ drives it.
   (`components/table-creation-interface.tsx`).
 - **Duplicate header labels are disambiguated** rather than dropped: two `region` headers become
   `region` and `region_2`.
-- **One transaction per table's rows.** NULL is preserved as NULL, and a constraint violation rolls
-  the table's insert back instead of dropping rows.
+- **Import execution controls** (`lib/import-execution.ts`): batch size, what a blank cell becomes,
+  empty-row skipping, text trimming, type conversion and continue-after-failed-batch. They are sent
+  with the insert and reported back per sheet — rows, batches, skipped rows, duration.
+- **One transaction per table's rows** by default. NULL is preserved as NULL, and a constraint
+  violation rolls the table's insert back instead of dropping rows. With a batch size set, each batch
+  commits on its own, so a failure costs only its own rows — and the response says exactly which
+  batch failed and how many rows had landed.
 - **Partial failure is reported, not hidden.** A sheet that fails is named in the run summary and the
   remaining sheets still run.
+- **Workflow guidance** (`lib/workflow-insights.ts`): readiness, the blocker for the current stage,
+  and recommendations — all derived from the state the wizard already holds.
 
 ### Connections and the database explorer
 
@@ -143,7 +150,7 @@ switch between `dev`, `build` and `start` after an interrupted run.
 ## Checks
 
 ```bash
-corepack pnpm check        # six assertion scripts against the real modules
+corepack pnpm check        # seven assertion scripts against the real modules
 corepack pnpm check:types  # tsc over the app and over scripts/
 corepack pnpm build        # production build
 ```
@@ -156,6 +163,7 @@ corepack pnpm build        # production build
 | `check-table-ops.ts` | Real SQLite: structure, paging, alter, the column-type rebuild, row mutations, snapshots, query guard. |
 | `check-tables.ts` | The Table Studio plan: ordering, payload shapes, guardrail gates, partial failure, keyless tables. |
 | `check-sqlite.ts` | Real SQLite round trip: create, insert, preview, introspect, `NOT NULL` rollback. |
+| `check-import-execution.ts` | The insert policy and the guidance layer, plus the real route: one transaction without execution options, one per batch with them, partial-commit telemetry. |
 
 Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verifying-a-change) and
 [docs/WORKSPACE.md](docs/WORKSPACE.md#verifying-a-change).
@@ -164,9 +172,13 @@ Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#verifying-a-change) a
 
 ```
 app/
-  layout.tsx                  root layout, providers, the app shell
+  layout.tsx                  root layout, providers, the app shell, next/font wiring
   page.tsx                    dashboard
   globals.css                 Tailwind v4 entry, theme tokens and motion
+  loading.tsx                 route-level loading skeleton
+  error.tsx                   route error boundary
+  global-error.tsx            last-resort boundary when the shell itself fails
+  not-found.tsx               404 for unknown routes
   import/page.tsx             the seven-stage workflow and its state
   connections/page.tsx        connection profiles and the database explorer
   data/page.tsx               datasets: operations, validation, export
@@ -180,6 +192,7 @@ components/
   connection-select.tsx       shared connection picker
   expression-field.tsx        expression input with live validation
   workflow-stepper.tsx        the seven stage definitions
+  workflow-guidance.tsx       readiness, blockers and recommendations panel
   file-upload-zone.tsx        stage 1
   excel-preview.tsx           stage 2
   database-connection-form.tsx / database-connection-list.tsx
@@ -199,6 +212,8 @@ lib/
   excel.ts                    parseWorkbooks
   schema.ts                   analyzeColumn, analyzeSheet, name sanitizers, type adaptation
   transform.ts                coerceCell, transformDataRows and date handling
+  import-execution.ts         the insert batching policy: defaults, blank/trim/convert rules
+  workflow-insights.ts        readiness, blockers and recommendations for a run
   expression.ts               the safe expression language
   operations.ts               the data operation engine, validation, grid↔table conversion
   guardrails.ts               risk classification for every destructive action
@@ -219,9 +234,10 @@ docs/
   WORKSPACE.md                datasets, operations, expressions, guardrails, snapshots, retention
   API.md                      the fifteen routes
   TRACKER.md                  status, limitations, backlog
+  UX_SCALABILITY_UPGRADE.md   the brief behind the execution controls and the guidance panel
 scripts/
   check-pipeline.ts  check-workspace.ts  check-data.ts
-  check-table-ops.ts  check-tables.ts  check-sqlite.ts
+  check-table-ops.ts  check-tables.ts  check-sqlite.ts  check-import-execution.ts
 ```
 
 ## Supported databases

@@ -23,6 +23,29 @@ engine, the expression language, guardrails, snapshots, retention) are independe
 `⌘K` command palette and the route transition. Every page below starts at a `PageHeader` and a
 `<main>`; none of them renders its own navigation.
 
+Four files in `app/` are framework boundaries rather than pages: `loading.tsx` is the skeleton the
+shell shows while a segment resolves, `error.tsx` catches a failure inside a page and offers `reset`,
+`not-found.tsx` answers unknown routes, and `global-error.tsx` replaces the whole document when the
+root layout itself fails — it therefore imports nothing from the app and carries its own inline
+styles.
+
+### Type and colour
+
+`app/globals.css` is the only stylesheet. It holds the theme tokens for light and dark, the five
+presets, the table-density and motion rules, and the base layer.
+
+Fonts come from `next/font` through the `geist` package: `app/layout.tsx` puts the generated
+`GeistSans.variable` / `GeistMono.variable` classes on `<html>`, and `@theme inline` maps them to
+`--font-sans` / `--font-mono`, which is what `font-sans`, `font-mono` and Tailwind's preflight read.
+Assigning `GeistSans.variable` — a class name — directly to a font-family token is the failure mode
+this replaced: every `font-mono` element silently fell back to the browser's default serif.
+
+Colour tokens are contrast decisions. `--muted-foreground` must stay a step lighter than
+`--foreground` (it is what placeholders and secondary copy read as), `--input` must stay darker than
+the surface it borders, `--ring` is opaque because the focus utilities apply their own `/50`, and
+every preset carries the `--primary-foreground` / `--secondary-foreground` / `--accent-foreground`
+its own lightness needs. The measured ratios are recorded in [TRACKER.md](TRACKER.md).
+
 | Route | Owner | What it does |
 |-------|-------|--------------|
 | `/` | `app/page.tsx` | Dashboard: workspace totals, recent runs, dataset list, quick actions. |
@@ -42,13 +65,18 @@ stage list. `app/page.tsx` owns the step index and renders one component per sta
 
 | # | Stage | Owner | What it does |
 |---|-------|-------|--------------|
-| 1 | Upload | `app/page.tsx`, `components/file-upload-zone.tsx`, `lib/excel.ts` | Collects `File[]`. "Analyze files" calls `parseWorkbooks` and advances to stage 2. |
+| 1 | Upload | `app/import/page.tsx`, `components/file-upload-zone.tsx`, `lib/excel.ts` | Collects `File[]`. "Analyze files" calls `parseWorkbooks` and advances to stage 2. |
 | 2 | Preview | `components/excel-preview.tsx` | Renders sheets, headers and sample rows from the `ParsedWorkbook`. |
-| 3 | Database | `components/database-connection-form.tsx`, `components/database-connection-list.tsx`, `lib/storage.ts` | Creates, tests and saves connection profiles (`ConnectionStorage`), lists databases, creates a database, and loads the database's tables before handing `DatabaseConfig` + `DatabaseTable[]` up to `app/page.tsx`. |
+| 3 | Database | `components/database-connection-form.tsx`, `components/database-connection-list.tsx`, `lib/storage.ts` | Creates, tests and saves connection profiles (`ConnectionStorage`), lists databases, creates a database, and loads the database's tables before handing `DatabaseConfig` + `DatabaseTable[]` up to `app/import/page.tsx`. |
 | 4 | Sheets | `components/sheet-selection-interface.tsx` | Picks the sheets that should become tables and emits `SheetInput[]`. |
-| 5 | Tables | `components/table-creation-interface.tsx` with `lib/schema.ts`, `lib/transform.ts`, `lib/db/index.ts` | `analyzeSheet` per sheet, editable `TableCreationConfig`, `createTable`, `transformDataRows`, `insertData`. Returns `CreatedTable[]` and `FailedTable[]`. |
+| 5 | Tables | `components/table-creation-interface.tsx` with `lib/schema.ts`, `lib/transform.ts`, `lib/db/index.ts` | `analyzeSheet` per sheet, editable `TableCreationConfig`, the import execution panel (`lib/import-execution.ts`), `createTable`, `transformDataRows`, the insert route. Returns `CreatedTable[]`, `FailedTable[]` and the per-sheet `TableCreationOutcome[]`. |
 | 6 | Verify | `components/table-preview-interface.tsx` | `previewTable` for each created table so the rows can be checked before the run is closed. |
 | 7 | Done | `components/results-dashboard.tsx` with `lib/storage.ts` | `buildRunResult` assembles the `OperationResult`, `RunHistory.record` stores it, and the JSON report can be downloaded. |
+
+Above the stage, `app/import/page.tsx` renders `components/workflow-guidance.tsx`: readiness, the
+blocker for the stage the user is on, and up to three recommendations. Every sentence comes from
+`lib/workflow-insights.ts`, a pure function over the state the page already holds — it fetches
+nothing, writes nothing, and changes no pipeline behaviour.
 
 ## The pipeline
 
@@ -62,11 +90,11 @@ ExcelSheet                  { name, headers: string[], data: unknown[][] }
   -> analyzeSheet(sheet)    lib/schema.ts       analyzeColumn per column
 TableCreationConfig         { tableName, columns: ColumnAnalysis[], primaryKey }
   -> transformDataRows(...) lib/transform.ts    per-cell coercion to the column's type
-  -> insertData(...)        lib/db/index.ts     one INSERT per row, one transaction
+  -> insert-data route      app/api/insert-data/route.ts  the execution policy, then chunking
+     -> insertDataInBatches lib/db/index.ts     one INSERT per row, one transaction per batch
   -> previewTable(...)      lib/db/index.ts     { columns, data, totalRows }
   -> buildRunResult(...)    lib/storage.ts      OperationResult
 ```
-
 Hop by hop:
 
 - **`File[]` → `parseWorkbooks` (`lib/excel.ts`).** Runs in the browser. A workbook that cannot be
@@ -89,8 +117,15 @@ Hop by hop:
   expects: dates become `YYYY-MM-DD` (or `YYYY-MM-DD HH:MM:SS` for DATETIME/TIMESTAMP) in UTC,
   booleans become real booleans, numerics become numbers, everything else stays a string, and
   `null` / `undefined` / `""` become `null`.
-- **`insertData` (`lib/db/index.ts`).** One `INSERT` statement built once per table, executed once
-  per row inside a single transaction. Rows that are entirely null are skipped.
+- **The insert path.** `lib/import-execution.ts` holds the policy — `normalizeInsertExecution` (an
+  absent policy means one transaction) and `prepareInsertRows` (trim, blank-cell handling, coercion
+  against the column types). The route applies it and hands the rows to **`insertDataInBatches`
+  (`lib/db/index.ts`)**: one `INSERT` statement built once per table, executed once per row, inside
+  one transaction — or one transaction per `batchSize` chunk when the caller asked for batching.
+  Rows that are entirely null are skipped (the `skipEmptyRows` option), and each chunk reports its own
+  outcome, so a failure can be described as "batch 4 of 9" with the rows that had already landed.
+  `insertData` remains the atomic entry point: it delegates with `batchSize: 0` and rethrows the first
+  batch error.
 - **`previewTable`.** Returns the first `limit` rows (default 10), the column names (from the row
   keys, or from column introspection when the table is empty), and a separate `COUNT(*)` as
   `totalRows`.
@@ -108,11 +143,14 @@ Two files, and the split between them is the point.
   session, runs the callback, and closes the session whether it resolves or throws. Drivers are
   imported lazily inside `open()`, so no database driver reaches the client bundle.
 - **`lib/db/index.ts`** implements each operation exactly once: `testConnection`, `listDatabases`,
-  `createDatabase`, `getTables`, `createTable`, `insertData`, `previewTable`. No operation knows
-  which engine it is talking to.
+  `createDatabase`, `getTables`, `createTable`, `insertData`, `insertDataInBatches`, `previewTable`.
+  No operation knows which engine it is talking to.
 
 Every route handler in `app/api/*/route.ts` is a thin wrapper: parse the body, call one function
-from `lib/db`, return it through `jsonRoute` (`lib/http.ts`).
+from `lib/db`, return it through `jsonRoute` (`lib/http.ts`). The one exception is
+`insert-data`, which also normalizes the execution policy and prepares the rows through
+`lib/import-execution.ts` before it calls `insertDataInBatches` — the policy belongs to the request,
+not to the engine.
 
 | Engine | Identifier quoting | Parameters | Auto id column | Type mapping |
 |--------|--------------------|------------|----------------|--------------|
@@ -141,10 +179,12 @@ These are invariants, not preferences. Changing one changes behaviour users depe
    columns and decimal columns into DATETIME columns. Instants are rounded to the nearest second
    before formatting, because Excel stores times as a fraction of a day and a written `17:45:00`
    otherwise arrives a millisecond short and is stored as `17:44:59`.
-2. **NULL passes through untouched.** `transformCellValue` maps blank cells to `null` and
-   `insertData` binds that value as-is. If a NOT NULL column receives a null, the transaction rolls
-   back and the whole batch of rows for that table fails, with the engine's message surfaced to the
-   user. The app does not drop offending rows and does not substitute `''` or `0`.
+2. **NULL passes through untouched.** `transformCellValue` maps blank cells to `null` and the insert
+   binds that value as-is. If a NOT NULL column receives a null, that transaction rolls back and the
+   engine's message is surfaced to the user; the app does not substitute `''` or `0`. The one
+   alternative the operator can choose is `blankCells: "skip-row"`, which drops the whole row rather
+   than writing a null into it — never a fabricated value. Without a batch size the failure costs the
+   whole table's insert; with one it costs that batch, and the response names the batch.
 3. **Duplicate header labels are suffixed, not silently merged.** `uniqueNames` in `lib/schema.ts`
    turns `region`, `region`, `region` into `region`, `region_2`, `region_3`. Two columns in one
    table cannot share a name, and dropping one of them would lose data.
