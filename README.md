@@ -124,6 +124,22 @@ corepack pnpm dev
 
 Open <http://localhost:3000>. Appearance, guardrails and retention are at `/settings`.
 
+### If the dev server returns 500 with `a[d] is not a function`
+
+Stop every running Next process and clear the build directory:
+
+```bash
+corepack pnpm clean
+corepack pnpm dev
+```
+
+`.next` is shared by `next dev`, `next build` and `next start`, and it holds the route and chunk
+manifests. **Two Next processes writing it at once corrupt each other**, and the failure is not
+obvious: a request can fall through to `/_not-found` (a 404 on a route that exists), or the webpack
+runtime can fail to find a module factory and throw `a[d] is not a function` with a digest. Both are
+the same cause. Run one Next process per working copy at a time, and `pnpm clean` whenever you
+switch between `dev`, `build` and `start` after an interrupted run.
+
 ## Checks
 
 ```bash

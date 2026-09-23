@@ -10,6 +10,7 @@
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
+    "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
     "check": "bun scripts/check-pipeline.ts && bun scripts/check-workspace.ts && bun scripts/check-data.ts && bun scripts/check-table-ops.ts && bun scripts/check-tables.ts && bun scripts/check-sqlite.ts",
     "check:types": "tsc --noEmit && tsc -p scripts --noEmit"
   },
