@@ -15,6 +15,14 @@ export const DEFAULT_PORTS: Record<DatabaseType, number | undefined> = {
   sqlite: undefined,
 }
 
+/** How each engine is written in the UI. One map, so a label cannot drift. */
+export const DATABASE_LABELS: Record<DatabaseType, string> = {
+  mysql: "MySQL",
+  postgresql: "PostgreSQL",
+  sqlite: "SQLite",
+  mssql: "SQL Server",
+}
+
 /** A saved, user-owned connection profile (kept in localStorage). */
 export interface DatabaseConfig {
   id: string
@@ -33,6 +41,21 @@ export interface DatabaseConfig {
   favorite?: boolean
   /** Optional free-text grouping label. */
   group?: string
+}
+
+/** A database service found on the machine running the app. */
+export interface LocalService {
+  type: DatabaseType
+  host: string
+  port: number
+  /** A TCP probe answered on that port. Detection only — no credentials were tried. */
+  reachable: boolean
+}
+
+export interface LocalServices {
+  services: LocalService[]
+  /** SQLite files sitting in the app's working directory, which is where they land by default. */
+  sqliteFiles: Array<{ path: string; name: string; size: number }>
 }
 
 /** Connection details for a server before a database has been chosen. */

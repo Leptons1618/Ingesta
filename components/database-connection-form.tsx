@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Database, Eye, EyeOff, Loader2 } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { Database, Eye, EyeOff, Globe, HardDrive, Loader2, RefreshCw } from "lucide-react"
 
 import { StatusAlert } from "@/components/common"
 import { Button } from "@/components/ui/button"
@@ -10,13 +10,26 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { postJson } from "@/lib/api"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { api, postJson } from "@/lib/api"
 import { ConnectionStorage } from "@/lib/storage"
-import { DEFAULT_PORTS, type ConnectionTestResult, type DatabaseConfig, type DatabaseType, type ServerOptions } from "@/lib/types"
+import {
+  DATABASE_LABELS,
+  DEFAULT_PORTS,
+  type ConnectionTestResult,
+  type DatabaseConfig,
+  type DatabaseType,
+  type LocalServices,
+  type ServerOptions,
+} from "@/lib/types"
+import { cn, formatBytes } from "@/lib/utils"
 
 interface DatabaseConnectionFormProps {
   onSaved: (connections: DatabaseConfig[]) => void
 }
+
+/** Where the database is: this machine, or a server reached over the network. */
+type ConnectionLocation = "local" | "remote"
 
 /** The draft keeps `type` always set so server options never need a fallback. */
 type ConnectionDraft = Omit<Partial<DatabaseConfig>, "type"> & { type: DatabaseType }
@@ -28,6 +41,10 @@ const emptyDraft: ConnectionDraft = { type: "mysql", port: DEFAULT_PORTS.mysql, 
 export function DatabaseConnectionForm({ onSaved }: DatabaseConnectionFormProps) {
   const [config, setConfig] = useState<ConnectionDraft>(emptyDraft)
   const [showPassword, setShowPassword] = useState(false)
+  const [location, setLocation] = useState<ConnectionLocation>("local")
+  const [services, setServices] = useState<LocalServices | null>(null)
+  const [isDetecting, setIsDetecting] = useState(false)
+  const [detectError, setDetectError] = useState<string | null>(null)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null)
   const [databaseOptions, setDatabaseOptions] = useState<string[]>([])
@@ -55,6 +72,47 @@ export function DatabaseConnectionForm({ onSaved }: DatabaseConnectionFormProps)
       database: "",
       ssl: type === "sqlite" ? false : prev.ssl,
     }))
+  }
+
+  /** Probes this machine: default ports for the server engines, plus local SQLite files. */
+  const detect = useCallback(async () => {
+    setIsDetecting(true)
+    setDetectError(null)
+
+    const result = await api.listLocalServices()
+    setIsDetecting(false)
+
+    if (!result.ok) {
+      setServices(null)
+      setDetectError(result.error)
+      return
+    }
+
+    setServices(result.data)
+  }, [])
+
+  // Detection is the point of the local tab, so it runs the first time it is shown.
+  useEffect(() => {
+    if (location === "local" && services === null && !isDetecting && !detectError) void detect()
+  }, [detect, detectError, isDetecting, location, services])
+
+  /** Choosing something that was detected fills the draft; credentials stay typed by hand. */
+  const applyDetected = (patch: Partial<DatabaseConfig>) => {
+    setDatabaseOptions([])
+    setNewDatabaseName("")
+    setTestResult(null)
+    setDatabaseMessage(null)
+    setConfig((previous) => {
+      const next = { ...previous, ...patch }
+      // A file has no server to point at, so the server fields go with the pick.
+      if (next.type === "sqlite") {
+        next.host = undefined
+        next.port = undefined
+        next.username = undefined
+        next.password = undefined
+      }
+      return next
+    })
   }
 
   const handleTestConnection = async () => {
@@ -233,6 +291,99 @@ export function DatabaseConnectionForm({ onSaved }: DatabaseConnectionFormProps)
             onChange={(e) => setField({ name: e.target.value })}
           />
         </div>
+
+        {/* Where the database lives. Local detects; remote is typed and validated. */}
+        <div className="space-y-2">
+          <Tabs value={location} onValueChange={(value) => setLocation(value as ConnectionLocation)}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="local">
+                <HardDrive aria-hidden className="size-4" />
+                This machine
+              </TabsTrigger>
+              <TabsTrigger value="remote">
+                <Globe aria-hidden className="size-4" />
+                Remote server
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <p className="text-xs text-muted-foreground">
+            {location === "local"
+              ? "Services found on this machine, filled in for you. Detection is a port probe; credentials are never tried."
+              : "Type the server's details and test them. Nothing is probed or assumed."}
+          </p>
+        </div>
+
+        {location === "local" ? (
+          <div className="space-y-2 rounded-lg border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">Detected on this machine</p>
+              <Button variant="ghost" size="sm" onClick={() => void detect()} disabled={isDetecting}>
+                {isDetecting ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                Scan again
+              </Button>
+            </div>
+
+            {detectError ? <StatusAlert tone="error">{detectError}</StatusAlert> : null}
+
+            {services ? (
+              <ul className="space-y-1">
+                {services.services.map((service) => (
+                  <li key={service.type} className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5">
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "size-2 shrink-0 rounded-full",
+                        service.reachable ? "bg-emerald-500" : "bg-border",
+                      )}
+                    />
+                    <span className="text-sm">{DATABASE_LABELS[service.type]}</span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {service.host}:{service.port}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {service.reachable ? "listening" : "nothing there"}
+                    </span>
+                    {service.reachable ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="ml-auto"
+                        onClick={() =>
+                          applyDetected({ type: service.type, host: service.host, port: service.port, database: "" })
+                        }
+                      >
+                        Use
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+
+                {services.sqliteFiles.map((file) => (
+                  <li key={file.path} className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5">
+                    <span aria-hidden className="size-2 shrink-0 rounded-full bg-primary" />
+                    <span className="text-sm">SQLite file</span>
+                    <span className="truncate font-mono text-xs text-muted-foreground">{file.name}</span>
+                    <span className="text-xs text-muted-foreground">{formatBytes(file.size)}</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto"
+                      onClick={() => applyDetected({ type: "sqlite", database: file.path })}
+                    >
+                      Use
+                    </Button>
+                  </li>
+                ))}
+
+                {services.services.every((service) => !service.reachable) && services.sqliteFiles.length === 0 ? (
+                  <li className="px-2 py-1 text-sm text-muted-foreground">
+                    Nothing detected. Start a local database, or switch to a remote server.
+                  </li>
+                ) : null}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Database Type */}
         <div className="space-y-2">

@@ -151,4 +151,28 @@ assert.equal(adaptTypeForDatabase("VARCHAR(255)", "mssql"), "NVARCHAR(255)")
 assert.equal(adaptTypeForDatabase("JSON", "postgresql"), "JSONB")
 assert.equal(adaptTypeForDatabase("DATETIME", "sqlite"), "TEXT")
 
+// T-SQL rejects ORDER BY inside a derived table, so the row cap goes into the
+// statement itself; only shapes that cannot take a TOP keep the wrapper.
+const mssqlLimit = dialectFor("mssql").limitSql
+assert.equal(
+  mssqlLimit("SELECT * FROM orders ORDER BY id", 10),
+  "SELECT TOP (10) * FROM orders ORDER BY id",
+  "a plain SELECT takes the cap itself",
+)
+assert.equal(
+  mssqlLimit("SELECT DISTINCT code FROM orders", 10),
+  "SELECT DISTINCT TOP (10) code FROM orders",
+  "DISTINCT keeps its place ahead of TOP",
+)
+assert.match(
+  mssqlLimit("WITH x AS (SELECT 1 AS a) SELECT * FROM x", 10),
+  /^SELECT TOP \(10\) \* FROM \(WITH x AS/,
+  "a shape that cannot take a TOP keeps the wrapper",
+)
+assert.equal(
+  dialectFor("postgresql").limitSql("SELECT * FROM orders ORDER BY id", 10),
+  'SELECT * FROM (SELECT * FROM orders ORDER BY id) AS "_ingesta_query" LIMIT 10',
+  "the other engines keep the wrapper, where ORDER BY is legal",
+)
+
 console.log("check-pipeline: all assertions passed")

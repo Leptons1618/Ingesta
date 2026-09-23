@@ -1,6 +1,6 @@
 # API
 
-Fifteen routes, all `POST`, all JSON. There are no `GET` endpoints and no dynamic segments.
+Sixteen routes, all `POST`, all JSON. There are no `GET` endpoints and no dynamic segments.
 
 **Convention.** Every handler runs its work through `jsonRoute` (`lib/http.ts`) and answers either
 
@@ -32,6 +32,18 @@ applied when the DDL is built.
 ---
 
 ## Connection and server
+
+### POST /api/local-services
+
+What is listening on the machine running the app: a TCP probe of the server engines' default ports
+(PostgreSQL 5432, MySQL 3306, SQL Server 1433) plus the SQLite files in the working directory.
+
+- **Request body:** `{}`.
+- **Success payload:** `{ services: LocalService[], sqliteFiles: Array<{ path, name, size }> }`, where
+  `LocalService` is `{ type, host, port, reachable }`.
+- **Called by:** `components/database-connection-form.tsx` (the "This machine" tab).
+- **Note:** detection is a port probe, never an authentication — `reachable: true` says a socket
+  answered, not that any credentials work. Nothing outside the working directory is read.
 
 ### POST /api/test-connection
 

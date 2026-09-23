@@ -3,15 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { FileSpreadsheet, Loader2, RefreshCw } from "lucide-react"
 
-import { DatabaseConnectionForm } from "@/components/database-connection-form"
-import { DatabaseConnectionList } from "@/components/database-connection-list"
+import { DatabaseStep } from "@/components/connections/database-step"
 import { ExcelPreview } from "@/components/excel-preview"
 import { FileUploadZone } from "@/components/file-upload-zone"
 import { ResultsDashboard } from "@/components/results-dashboard"
 import { SheetSelectionInterface } from "@/components/sheet-selection-interface"
 import { TableCreationInterface } from "@/components/table-creation-interface"
 import { TablePreviewInterface } from "@/components/table-preview-interface"
-import { PageHeader, StatCard, StatGrid, StatusAlert } from "@/components/common"
+import { PageHeader, StatCard, StatGrid, StatusAlert, PAGE_CONTAINER } from "@/components/common"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -31,7 +30,7 @@ import type {
   SheetInput,
   TableCreationOutcome,
 } from "@/lib/types"
-import { formatBytes } from "@/lib/utils"
+import { cn, formatBytes } from "@/lib/utils"
 
 export default function ImportPage() {
   const [step, setStep] = useState(1)
@@ -201,6 +200,7 @@ export default function ImportPage() {
       <PageHeader
         title="Import workbooks"
         description="Excel to database import workflow"
+        width="narrow"
         badge={<Badge variant="outline">Beta</Badge>}
         actions={
           <>
@@ -215,7 +215,7 @@ export default function ImportPage() {
         }
       />
 
-      <main className="mx-auto w-full max-w-5xl px-6 py-8">
+      <main className={cn(PAGE_CONTAINER.narrow, "py-8")}>
         {step < 7 ? (
           <div className="mb-8 space-y-4">
             <div>
@@ -307,14 +307,11 @@ export default function ImportPage() {
         ) : null}
 
         {step === 3 ? (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <DatabaseConnectionForm onSaved={setConnections} />
-            <DatabaseConnectionList
-              connections={connections}
-              onRemoved={setConnections}
-              onSelected={selectConnection}
-            />
-          </div>
+          <DatabaseStep
+            connections={connections}
+            onConnectionsChanged={setConnections}
+            onComplete={selectConnection}
+          />
         ) : null}
 
         {step === 4 && workbook && connection ? (

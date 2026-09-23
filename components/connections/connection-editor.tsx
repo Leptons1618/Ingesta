@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { ConnectionStorage } from "@/lib/storage"
 import { toast } from "@/lib/toast"
-import { DATABASE_TYPES, DEFAULT_PORTS, type DatabaseConfig, type DatabaseType } from "@/lib/types"
+import { DATABASE_LABELS, DATABASE_TYPES, DEFAULT_PORTS, type DatabaseConfig, type DatabaseType } from "@/lib/types"
 
 interface ConnectionEditorProps {
   /** The profile being edited; `null` keeps the dialog closed and empty. */
@@ -25,13 +25,6 @@ interface ConnectionEditorProps {
 /** Editors show the stored profile, so every field starts populated. */
 function draftFrom(connection: DatabaseConfig): DatabaseConfig {
   return { ...connection }
-}
-
-const TYPE_LABELS: Record<DatabaseType, string> = {
-  mysql: "MySQL",
-  postgresql: "PostgreSQL",
-  sqlite: "SQLite",
-  mssql: "SQL Server",
 }
 
 /**
@@ -141,7 +134,7 @@ export function ConnectionEditor({ connection, onOpenChange, onSaved }: Connecti
                   <SelectContent>
                     {DATABASE_TYPES.map((type) => (
                       <SelectItem key={type} value={type}>
-                        {TYPE_LABELS[type]}
+                        {DATABASE_LABELS[type]}
                       </SelectItem>
                     ))}
                   </SelectContent>

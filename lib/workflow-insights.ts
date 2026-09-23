@@ -53,7 +53,7 @@ const MAX_RECOMMENDATIONS = 3
 const STAGE_ACTIONS: Record<number, string> = {
   1: "Select the workbooks to import.",
   2: "Check the detected sheets, then continue to the connection.",
-  3: "Choose a saved connection, or save a new one.",
+  3: "Choose the connection and the database this run writes to.",
   4: "Select the sheets to import, then continue.",
   5: "Configure each sheet's schema, then create its table.",
   6: "Check the inserted rows, then finish the run to record it.",

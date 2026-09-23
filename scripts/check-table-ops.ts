@@ -326,7 +326,11 @@ try {
     "SELECT * FROM [t1] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY",
     "OFFSET needs an ORDER BY, so a stable one is supplied",
   )
-  assert.equal(mssql.limitSql("SELECT 1", 501), "SELECT TOP (501) * FROM (SELECT 1) AS [_ingesta_query]")
+  assert.equal(
+    mssql.limitSql("SELECT 1", 501),
+    "SELECT TOP (501) 1",
+    "the cap goes into the SELECT itself; a derived table would reject ORDER BY",
+  )
   assert.deepEqual(mssql.changeTypeSql("t1", "a", "INT", false), ["ALTER TABLE [t1] ALTER COLUMN [a] INT NOT NULL"])
   assert.equal(mssql.renameTableSql("t1", "t2"), "EXEC sp_rename 't1', 't2'")
   assert.equal(mssql.renameColumnSql("t1", "a", "b"), "EXEC sp_rename 't1.a', 'b', 'COLUMN'")

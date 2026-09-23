@@ -64,6 +64,12 @@ drives it.
 
 - **Saved profiles** with pinning, duplication, editing and per-profile test
   (`components/connections/*`).
+- **Local or remote.** The connection form has a "This machine" tab that probes the engines' default
+  ports and lists the SQLite files in the working directory, and a "Remote server" tab that takes
+  credentials and validates them — nothing is guessed on a remote host.
+- **The database is chosen in a tree**, not a dropdown: databases expand to show their tables
+  (`components/connections/database-tree.tsx`), and a database can be created from the same tree. The
+  import wizard reaches that tree without saving a profile first.
 - **Import and export of profiles as JSON**, with or without passwords, and an explicit warning when
   the export contains them.
 - **Table browser** with server-side paging and sorting, and per-table actions: rename, truncate,
@@ -184,7 +190,7 @@ app/
   data/page.tsx               datasets: operations, validation, export
   tables/page.tsx             table studio: pull, edit, apply
   settings/page.tsx           appearance, guardrails, retention
-  api/                        the fifteen POST routes (see docs/API.md)
+  api/                        the sixteen POST routes (see docs/API.md)
 components/
   app-shell.tsx               sidebar, mobile drawer, route transitions
   command-palette.tsx         ⌘K navigation
@@ -195,10 +201,11 @@ components/
   workflow-guidance.tsx       readiness, blockers and recommendations panel
   file-upload-zone.tsx        stage 1
   excel-preview.tsx           stage 2
-  database-connection-form.tsx / database-connection-list.tsx
+  database-connection-form.tsx  the create form, with the local/remote split
   sheet-selection-interface.tsx / table-creation-interface.tsx / table-preview-interface.tsx
   results-dashboard.tsx
-  connections/                profile list, editor, explorer, table browser, query console, snapshots
+  connections/                profile list, editor, explorer, table browser, query console,
+                              snapshots, the database step and its tree
   data/                       dataset list, grid, operations, history, validation, export
   tables/                     selection bar, pending changes, column editor, snapshots, save as
   common/                     DataGrid, ConfirmDialog, RiskBadge, Toolbar, Section, MiniBars,
@@ -232,7 +239,7 @@ lib/
 docs/
   ARCHITECTURE.md             pages, pipeline, database layer, decisions
   WORKSPACE.md                datasets, operations, expressions, guardrails, snapshots, retention
-  API.md                      the fifteen routes
+  API.md                      the sixteen routes
   TRACKER.md                  status, limitations, backlog
   UX_SCALABILITY_UPGRADE.md   the brief behind the execution controls and the guidance panel
 scripts/
@@ -258,5 +265,5 @@ the SQL, DDL and type-mapping level; their drivers are not run.
   fit together, and the decisions behind them.
 - [docs/WORKSPACE.md](docs/WORKSPACE.md) — the data model: grids, operations, the expression
   language, guardrails, snapshots and retention.
-- [docs/API.md](docs/API.md) — the fifteen routes, with request bodies, payloads and error shapes.
+- [docs/API.md](docs/API.md) — the sixteen routes, with request bodies, payloads and error shapes.
 - [docs/TRACKER.md](docs/TRACKER.md) — what has been verified, and the known limitations.

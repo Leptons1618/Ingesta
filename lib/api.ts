@@ -7,6 +7,7 @@ import type {
   DatabaseTable,
   InsertExecutionOptions,
   InsertReport,
+  LocalServices,
   QueryResult,
   RowMutation,
   ServerOptions,
@@ -73,6 +74,10 @@ async function unwrap<T extends object, P>(
 export const api = {
   testConnection: (config: DatabaseConfig) =>
     unwrap("/api/test-connection", config, (payload: ConnectionTestResult) => payload),
+
+  /** What is listening on this machine; a probe, not an authentication. */
+  listLocalServices: () =>
+    unwrap("/api/local-services", {}, (payload: LocalServices) => payload),
 
   listDatabases: (config: ServerOptions) =>
     unwrap("/api/list-databases", { config }, (payload: { databases: string[] }) => payload.databases),

@@ -129,6 +129,21 @@ function mssqlPageSql(dialect: Dialect, table: string, page: PageOptions): strin
   return `SELECT * FROM ${dialect.quote(table)} ORDER BY ${order} OFFSET ${page.offset} ROWS FETCH NEXT ${page.limit} ROWS ONLY`
 }
 
+/**
+ * Caps a read on SQL Server.
+ *
+ * T-SQL rejects `ORDER BY` inside a derived table unless that level also has a
+ * `TOP`, and `SELECT … ORDER BY …` is the most ordinary query there is, so the
+ * cap goes *into* a leading `SELECT` rather than around the statement. Shapes
+ * that cannot take a `TOP` there — `WITH … SELECT`, `VALUES`, anything starting
+ * with a comment — keep the wrapper, which is where they were before.
+ */
+function mssqlLimitSql(sql: string, limit: number): string {
+  const head = /^\s*select\s+(?:distinct\s+|all\s+)?/i.exec(sql)
+  if (!head) return `SELECT TOP (${limit}) * FROM (${sql}) AS ${mssql.quote("_ingesta_query")}`
+  return `${sql.slice(0, head[0].length)}TOP (${limit}) ${sql.slice(head[0].length)}`
+}
+
 function addColumnStatement(dialect: Dialect, table: string, column: GridColumn): string {
   const type = adaptTypeForDatabase(column.type, dialect.type)
   return `ALTER TABLE ${dialect.quote(table)} ADD COLUMN ${dialect.quote(column.name)} ${type}${column.nullable ? "" : " NOT NULL"}`
@@ -388,19 +403,22 @@ const mssql: Dialect = {
     "SELECT name FROM sys.databases WHERE name NOT IN ('master','tempdb','model','msdb') ORDER BY name",
   tablesSql:
     "SELECT TABLE_NAME AS name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",
+  // T-SQL has no boolean type, so `(pk.COLUMN_NAME IS NOT NULL) AS pk` is a syntax
+  // error here — the CASE yields the 1/0 that `toBoolean` expects. The join alias is
+  // `pkey` rather than `pk` so the only `pk` in the statement is the output column.
   columnsSql: (table) => `
     SELECT c.COLUMN_NAME AS name,
            c.DATA_TYPE AS type,
            c.IS_NULLABLE AS nullable,
            NULL AS [default],
-           (pk.COLUMN_NAME IS NOT NULL) AS pk
+           CASE WHEN pkey.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS pk
     FROM INFORMATION_SCHEMA.COLUMNS c
     LEFT JOIN (
       SELECT kcu.COLUMN_NAME
       FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
       JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
       WHERE tc.TABLE_NAME = ${literal(table)} AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-    ) pk ON pk.COLUMN_NAME = c.COLUMN_NAME
+    ) pkey ON pkey.COLUMN_NAME = c.COLUMN_NAME
     WHERE c.TABLE_NAME = ${literal(table)}
     ORDER BY c.ORDINAL_POSITION`,
   countSql: (table) => `SELECT COUNT(*) AS cnt FROM ${mssql.quote(table)}`,
@@ -410,7 +428,7 @@ const mssql: Dialect = {
   createTableAsSql: (target, source) => `SELECT * INTO ${mssql.quote(target)} FROM ${mssql.quote(source)}`,
   insertFromSelectSql: (target, columns, source) => insertSelectSql(mssql, target, columns, source),
   pageSql: (table, page) => mssqlPageSql(mssql, table, page),
-  limitSql: (sql, limit) => `SELECT TOP (${limit}) * FROM (${sql}) AS ${mssql.quote("_ingesta_query")}`,
+  limitSql: (sql, limit) => mssqlLimitSql(sql, limit),
   // T-SQL spells the keyword ADD, never ADD COLUMN.
   addColumnSql: (table, column) =>
     `ALTER TABLE ${mssql.quote(table)} ADD ${mssql.quote(column.name)} ${adaptTypeForDatabase(column.type, "mssql")}${column.nullable ? "" : " NOT NULL"}`,

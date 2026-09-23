@@ -22,7 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { themePresetOptions, useAppSettingsStore, type TableDensity, type ThemeMode } from "@/lib/settings"
+import { themePresetOptions, useAppSettingsStore, type TableDensity, type ThemeMode, type ThemePreset } from "@/lib/settings"
 import { RunHistory } from "@/lib/storage"
 import type { RetentionPolicy } from "@/lib/types"
 import { formatBytes } from "@/lib/utils"
@@ -181,49 +181,62 @@ export default function SettingsPage() {
               </CardTitle>
               <CardDescription>Choose your mode and a preset palette. Changes apply immediately.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-3 sm:grid-cols-3">
-                {themeModeOptions.map((option) => {
-                  const Icon = option.icon
-                  const isActive = themeMode === option.value
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setThemeMode(option.value)}
-                      className={`cursor-pointer rounded-xl border px-4 py-4 text-left transition-all duration-200 hover:-translate-y-0.5 ${isActive ? "border-primary bg-primary/8" : "hover:bg-muted/40"}`}
-                    >
-                      <Icon className="h-4 w-4 text-primary" />
-                      <p className="mt-3 font-medium">{option.label}</p>
-                      <p className="text-sm text-muted-foreground">{option.value === "system" ? "Follow OS preference" : `Force ${option.label.toLowerCase()} mode`}</p>
-                    </button>
-                  )
-                })}
+            <CardContent className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Appearance</p>
+                  <Select value={themeMode} onValueChange={(value) => setThemeMode(value as ThemeMode)}>
+                    <SelectTrigger className="w-full" aria-label="Appearance">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {themeModeOptions.map((option) => {
+                        const Icon = option.icon
+                        return (
+                          <SelectItem key={option.value} value={option.value}>
+                            <Icon className="size-4 text-primary" />
+                            {option.label}
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {themeMode === "system"
+                      ? "Follows the operating system preference."
+                      : `Always ${themeMode}, whatever the system does.`}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Preset palette</p>
+                  <Select value={themePreset} onValueChange={(value) => setThemePreset(value as ThemePreset)}>
+                    <SelectTrigger className="w-full" aria-label="Preset palette">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {themePresetOptions.map((preset) => (
+                        <SelectItem key={preset.value} value={preset.value}>
+                          {preset.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {themePresetOptions.find((preset) => preset.value === themePreset)?.description}
+                  </p>
+                </div>
               </div>
 
-              <div className="space-y-3">
-                <p className="text-sm font-medium">Preset palette</p>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {themePresetOptions.map((preset) => {
-                    const isActive = themePreset === preset.value
-                    return (
-                      <button
-                        key={preset.value}
-                        type="button"
-                        onClick={() => setThemePreset(preset.value)}
-                        className={`cursor-pointer rounded-xl border px-4 py-4 text-left transition-all duration-200 hover:-translate-y-0.5 ${isActive ? "border-primary bg-primary/8" : "hover:bg-muted/40"}`}
-                      >
-                        <div className="mb-3 flex gap-2">
-                          <span className="h-3 w-3 rounded-full bg-primary" />
-                          <span className="h-3 w-3 rounded-full bg-secondary" />
-                          <span className="h-3 w-3 rounded-full bg-accent" />
-                        </div>
-                        <p className="font-medium">{preset.label}</p>
-                        <p className="text-sm text-muted-foreground">{preset.description}</p>
-                      </button>
-                    )
-                  })}
-                </div>
+              {/* The swatches read the live tokens, so they are the selected
+                  palette's colours rather than a fixed illustration. */}
+              <div className="flex items-center gap-2 rounded-lg border p-3">
+                <span className="h-3 w-3 rounded-full bg-primary" />
+                <span className="h-3 w-3 rounded-full bg-secondary" />
+                <span className="h-3 w-3 rounded-full bg-accent" />
+                <span className="ml-1 text-xs text-muted-foreground">
+                  Accent colours of the selected palette.
+                </span>
               </div>
             </CardContent>
           </Card>

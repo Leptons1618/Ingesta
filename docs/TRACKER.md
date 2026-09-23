@@ -372,6 +372,86 @@ telemetry at the API boundary, and a guidance layer over the wizard's own state.
   `order_id 400` absent, `amount` stored as REAL (the server-side conversion), and `notes` still
   `"  padded  "` — trimming was off, which is what the panel said it was.
 
+## UI feedback pass
+
+A round of feedback against the running app: the preview step, the database step, page chrome,
+settings density, and one real SQL Server bug.
+
+### SQL Server could not introspect a table
+
+- [x] **`Incorrect syntax near 'pk'`.** `columnsSql` for MSSQL selected
+  `(pk.COLUMN_NAME IS NOT NULL) AS pk`, and T-SQL has no boolean type — a boolean expression is not
+  a valid select-list item there. PostgreSQL and MySQL have one, which is why the same shape works
+  for them and fails only on SQL Server. The expression is now
+  `CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS pk`, which is what `toBoolean` expects
+  (1/0) and is valid T-SQL. Verified by reading the query; no SQL Server was reachable from here, so
+  the confirmation is the user's own server.
+- [x] **The same flaw in the query console.** `limitSql` wrapped every statement in a derived table,
+  and T-SQL rejects `ORDER BY` inside one, so `SELECT … ORDER BY …` — the most ordinary query there
+  is — failed on SQL Server while working on the other three. `mssqlLimitSql` now puts `TOP (n)`
+  into a leading `SELECT` (`DISTINCT` keeps its place ahead of it) and keeps the wrapper only for
+  shapes that cannot take a `TOP` there: `WITH … SELECT`, `VALUES`, or a statement that opens with a
+  comment. `check-pipeline.ts` asserts all three shapes plus the unchanged PostgreSQL wrapper.
+
+### Step 3 — the database step
+
+- [x] **The form no longer occupies the page.** Saved connections are cards you pick from; with none
+  saved the step shows an empty state whose button opens the create dialog
+  (`components/connections/database-step.tsx`). Selecting a connection no longer *is* the step.
+- [x] **The database is chosen in a tree** (`components/connections/database-tree.tsx`): databases
+  expand to their tables (loaded lazily, one query per expansion), a database is created from the
+  same tree, and the chosen one is what stage 4 receives. The connection's own database opens by
+  default. A SQLite connection shows its file as the single node.
+- [x] **Local or remote.** The connection form has a "This machine" tab that probes the engines'
+  default ports and lists the SQLite files in the working directory (`POST /api/local-services`), and
+  a "Remote server" tab that takes credentials and validates them on test. Detection is a port probe
+  and the UI says so — `reachable` is not authentication.
+- [x] `components/database-connection-list.tsx` deleted: it was the old step-3 panel, and the step
+  replaced it. `DATABASE_LABELS` moved into `lib/types.ts` so the form, the editor and the tree share
+  one set of engine names.
+
+### Page chrome, settings and cursors
+
+- [x] **Header and content agree on a width.** `components/common/page-header.tsx` exports
+  `PAGE_CONTAINER` (`wide` = full width with the gutter, `narrow` = centred `max-w-5xl`), and a page
+  passes the same one to its header and its `<main>`. Before this the header was `max-w-5xl` on every
+  page while five of six pages were full width — measured at 1117px of content under a 1024px header
+  on `/settings`.
+- [x] **Settings appearance is two dropdowns** instead of nine cards; the accent swatches below them
+  read the live tokens, so they show the selected palette rather than a fixed illustration.
+- [x] **Dropdowns use a hand cursor.** `SelectTrigger` and every `SelectItem` / `DropdownMenuItem`
+  carried `cursor-default`.
+
+### Preview step
+
+- [x] The file/sheet tabs-and-chips nesting is a master-detail rail: files on top, that file's sheets
+  below, each with its shape (`30 rows × 8 columns`), the selected row marked by an accent border.
+  Totals moved to one `2 files · 4 sheets` badge in the header.
+- [x] The table has a pinned header row and a pinned row-number gutter, a caption that says what is
+  shown (`Showing the first 50 of 1,200 rows · 8 columns`), a height cap, and blank cells rendered as
+  the grid's muted em dash instead of empty space.
+- [x] Pinning is wrapper CSS in `components/excel-preview.tsx` rather than a `DataGrid` feature: the
+  grid has no pinned-column support, and the app's sticky-header rule is unlayered so the pinned
+  corner cell needs an important z-index. A first-class `pinnedFirstColumn` in `DataGrid` would remove
+  both. Recorded in **Backlog**.
+
+### Verified in a browser
+
+- [x] Step 3 from an empty browser: empty state → create dialog → "This machine" listed MySQL
+  (`127.0.0.1:3306`), PostgreSQL (`:5432`), SQL Server (`:1433`) as listening and the SQLite file in
+  the working directory → "Use" filled the draft → test passed → saved → the step listed the profile
+  → the tree listed the file and its two tables → "Continue to sheets" landed on stage 4 with
+  `TARGET DATABASE Demo SQLite (SQLITE)` and the connection named in the page header.
+- [x] `/api/local-services` answered with the three listening engines and the SQLite file, on the
+  machine this was built on (all three services are actually running there).
+- [x] Preview step with a two-file, four-sheet fixture: file and sheet switching, caption updates,
+  `aria-pressed` on the selected rows, and the pinned header and gutter held at `scrollLeft=430`,
+  `scrollTop=200`.
+- [x] `/settings`: header and content both measured 1117px wide, the two dropdowns render the current
+  mode and preset, and `getComputedStyle(trigger).cursor` is `pointer`.
+- [x] `pnpm build` clean, then `next start`: `/import` answers 200 and `POST /api/local-services`
+  answers `{ success: true, services: [...] }` from the built output, not just from dev.
+
 ## Verification
 
 - [x] `pnpm check:types` — `tsc --noEmit` over the app and over `scripts/`, zero diagnostics.
@@ -464,6 +544,8 @@ Only work that follows from the limitations above.
   shape inside a batch, not the transaction boundary.
 - [ ] Offer a retry of only the failed batch after a partial insert, instead of leaving the operator to
   re-run the sheet and reconcile the rows that landed.
+- [ ] Give `DataGrid` a first-class pinned first column and a sticky-header z-index contract, so the
+  preview's wrapper CSS (and its `!` overrides) can go away.
 - [ ] Replace per-table `COUNT(*)` with an estimate, or make row counts opt-in in the connection
   list.
 - [ ] Chunk large sheets instead of holding them in memory and posting one body.
