@@ -46,6 +46,7 @@ export function ExportPanel({ grid, datasetName }: { grid: Grid; datasetName: st
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [pushing, setPushing] = useState(false)
   const snapshotBeforeMutation = useAppSettingsStore((state) => state.guardrails.snapshotBeforeMutation)
+  const maxSnapshots = useAppSettingsStore((state) => state.retention.maxSnapshotsPerTable)
 
   // Connections live in localStorage, which only exists once the page is running.
   useEffect(() => setConnections(ConnectionStorage.getAll()), [])
@@ -71,7 +72,7 @@ export function ExportPanel({ grid, datasetName }: { grid: Grid; datasetName: st
       // it cannot be taken.
       let snapshotNote = ""
       if (mode === "replace" && snapshotBeforeMutation) {
-        const snapshot = await api.createSnapshot(connection, tableName)
+        const snapshot = await api.createSnapshot(connection, tableName, undefined, maxSnapshots)
         if (!snapshot.ok) {
           toast.error("Snapshot failed, so nothing was replaced", snapshot.error)
           return
@@ -174,7 +175,7 @@ export function ExportPanel({ grid, datasetName }: { grid: Grid; datasetName: st
                   onChange={(event) => setTarget(event.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Columns are matched by name, and every cell is coerced to its column's type before it is written.
+                  Columns are matched by name, and every cell is coerced to its column&apos;s type before it is written.
                 </p>
               </div>
             </div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import {
   ArrowLeft,
@@ -112,6 +112,7 @@ export default function TableStudioPage() {
   const pageSize = useAppSettingsStore((state) => state.guardrails.maxRowsPerPage)
   const snapshotBeforeMutation = useAppSettingsStore((state) => state.guardrails.snapshotBeforeMutation)
   const requireTypedConfirmation = useAppSettingsStore((state) => state.guardrails.requireTypedConfirmation)
+  const maxSnapshots = useAppSettingsStore((state) => state.retention.maxSnapshotsPerTable)
 
   const [connections, setConnections] = useState<DatabaseConfig[]>([])
   const [connection, setConnection] = useState<DatabaseConfig | null>(null)
@@ -131,6 +132,7 @@ export default function TableStudioPage() {
   const [columnEditorOpen, setColumnEditorOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [saveAsOpen, setSaveAsOpen] = useState(false)
+  const requestVersion = useRef(0)
 
   // Saved connections live in localStorage, so they can only be read on the client.
   useEffect(() => {
@@ -140,11 +142,11 @@ export default function TableStudioPage() {
   const primaryKey = structure.find((column) => column.isPrimaryKey)?.name ?? null
 
   /* ------------------------------------------------------------------ data */
-
-  const loadTables = useCallback(async (config: DatabaseConfig) => {
+  const loadTables = useCallback(async (config: DatabaseConfig, version = requestVersion.current) => {
     setLoading(true)
     setError(null)
     const result = await api.getTables(config)
+    if (version !== requestVersion.current) return
     setLoading(false)
     if (!result.ok) {
       setTables([])
@@ -153,10 +155,10 @@ export default function TableStudioPage() {
     }
     setTables(result.data)
   }, [])
-
   const loadStructure = useCallback(
-    async (config: DatabaseConfig, name: string) => {
+    async (config: DatabaseConfig, name: string, version = requestVersion.current) => {
       const result = await api.getTableStructure(config, name)
+      if (version !== requestVersion.current) return
       if (!result.ok) {
         setError(result.error)
         return
@@ -165,9 +167,8 @@ export default function TableStudioPage() {
     },
     [],
   )
-
   const loadPage = useCallback(
-    async (config: DatabaseConfig, name: string, nextOffset: number, nextSort: DataGridSort | null) => {
+    async (config: DatabaseConfig, name: string, nextOffset: number, nextSort: DataGridSort | null, version = requestVersion.current) => {
       setLoading(true)
       setError(null)
       const result = await api.previewTable(config, name, {
@@ -176,6 +177,7 @@ export default function TableStudioPage() {
         orderBy: nextSort?.column,
         direction: nextSort?.direction,
       })
+      if (version !== requestVersion.current) return
       setLoading(false)
       if (!result.ok) {
         setPage(null)
@@ -183,12 +185,10 @@ export default function TableStudioPage() {
         return
       }
 
-      // Deleting rows can leave the window past the end of the table; land on
-      // the last page that still holds rows instead of showing an empty grid.
       const lastOffset = Math.max(0, Math.floor(Math.max(0, result.data.totalRows - 1) / pageSize) * pageSize)
       if (result.data.totalRows > 0 && nextOffset > lastOffset) {
         setOffset(lastOffset)
-        await loadPage(config, name, lastOffset, nextSort)
+        await loadPage(config, name, lastOffset, nextSort, version)
         return
       }
 
@@ -196,18 +196,18 @@ export default function TableStudioPage() {
     },
     [pageSize],
   )
-
-  const loadSnapshots = useCallback(async (config: DatabaseConfig) => {
+  const loadSnapshots = useCallback(async (config: DatabaseConfig, version = requestVersion.current) => {
     const result = await api.listSnapshots(config)
+    if (version !== requestVersion.current) return
     if (!result.ok) {
       setError(result.error)
       return
     }
     setSnapshots(result.data)
   }, [])
-
   const selectConnection = useCallback(
     async (config: DatabaseConfig | null) => {
+      const version = ++requestVersion.current
       setConnection(config)
       setTableName(null)
       setTables([])
@@ -221,44 +221,43 @@ export default function TableStudioPage() {
       setSort(null)
       if (!config) return
 
-      // Records the open, which is what the picker sorts by.
       ConnectionStorage.markUsed(config.id)
       setConnections(ConnectionStorage.getAll())
-      await loadTables(config)
+      await loadTables(config, version)
     },
     [loadTables],
   )
-
   const openTable = useCallback(
     (name: string) => {
       if (!connection) return
+      const version = ++requestVersion.current
       setTableName(name)
       setOffset(0)
       setSort(null)
       setPending(emptyPending())
       setStructure([])
       setPage(null)
-      void loadStructure(connection, name)
-      void loadPage(connection, name, 0, null)
-      void loadSnapshots(connection)
+      void loadStructure(connection, name, version)
+      void loadPage(connection, name, 0, null, version)
+      void loadSnapshots(connection, version)
     },
     [connection, loadPage, loadSnapshots, loadStructure],
   )
-
   const refresh = useCallback(async () => {
     if (!connection || !tableName) return
+    const version = ++requestVersion.current
     await Promise.all([
-      loadStructure(connection, tableName),
-      loadPage(connection, tableName, offset, sort),
-      loadSnapshots(connection),
+      loadStructure(connection, tableName, version),
+      loadPage(connection, tableName, offset, sort, version),
+      loadSnapshots(connection, version),
     ])
   }, [connection, loadPage, loadSnapshots, loadStructure, offset, sort, tableName])
-
   const goToPage = useCallback(
     (nextOffset: number) => {
       if (!connection || !tableName) return
+      const version = ++requestVersion.current
       setOffset(nextOffset)
-      void loadPage(connection, tableName, nextOffset, sort)
+      void loadPage(connection, tableName, nextOffset, sort, version)
     },
     [connection, loadPage, sort, tableName],
   )
@@ -267,7 +266,10 @@ export default function TableStudioPage() {
     (next: DataGridSort | null) => {
       setSort(next)
       setOffset(0)
-      if (connection && tableName) void loadPage(connection, tableName, 0, next)
+      if (connection && tableName) {
+        const version = ++requestVersion.current
+        void loadPage(connection, tableName, 0, next, version)
+      }
     },
     [connection, loadPage, tableName],
   )
@@ -389,11 +391,11 @@ export default function TableStudioPage() {
   const snapshotFirst = useCallback(
     async (config: DatabaseConfig, name: string): Promise<{ ok: true; note: string } | { ok: false; error: string }> => {
       if (!snapshotBeforeMutation) return { ok: true, note: "" }
-      const snapshot = await api.createSnapshot(config, name)
+      const snapshot = await api.createSnapshot(config, name, undefined, maxSnapshots)
       if (!snapshot.ok) return { ok: false, error: snapshot.error }
       return { ok: true, note: ` Snapshot "${snapshot.data.name}" holds the table as it was.` }
     },
-    [snapshotBeforeMutation],
+    [maxSnapshots, snapshotBeforeMutation]
   )
 
   /* ---------------------------------------------------------------- apply */
@@ -872,7 +874,7 @@ export default function TableStudioPage() {
               busy={busy}
               onTake={(name) => {
                 if (!connection || !tableName) return
-                void api.createSnapshot(connection, tableName, name || undefined).then(async (result) => {
+                void api.createSnapshot(connection, tableName, name || undefined, maxSnapshots).then(async (result) => {
                   if (!result.ok) {
                     setError(result.error)
                     return

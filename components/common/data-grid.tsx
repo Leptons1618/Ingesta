@@ -483,7 +483,15 @@ export function DataGrid({
                         key={`${column.name}-${columnIndex}`}
                         data-slot="table-cell"
                         title={flag === "error" ? "Flagged by validation: error" : flag === "warning" ? "Flagged by validation: warning" : undefined}
+                        tabIndex={editable && onCellChange ? 0 : undefined}
+                        aria-label={editable && onCellChange ? `Edit ${column.name}, row ${rowIndex + 1}` : undefined}
                         onDoubleClick={() => beginEdit(rowIndex, columnIndex, value)}
+                        onKeyDown={(event) => {
+                          if ((event.key === "Enter" || event.key === "F2") && editable && onCellChange) {
+                            event.preventDefault()
+                            beginEdit(rowIndex, columnIndex, value)
+                          }
+                        }}
                         style={{ height: rowHeight }}
                         className={cn(
                           "relative border-b border-border px-2 py-1 leading-none align-middle whitespace-nowrap",

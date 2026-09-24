@@ -1,23 +1,26 @@
 import { alterTable, dropTable, truncateTable } from "@/lib/db"
-import { jsonRoute } from "@/lib/http"
+import { assertOneOf, jsonRoute, readJson } from "@/lib/http"
 import type { DatabaseConfig } from "@/lib/types"
+
+const TABLE_ADMIN_ACTIONS = ["drop", "truncate", "rename"] as const
 
 /** Dropping, emptying and renaming are the three whole-table operations. */
 export async function POST(request: Request) {
-  const { config, tableName, action, to } = (await request.json()) as {
-    config: DatabaseConfig
-    tableName: string
-    action: "drop" | "truncate" | "rename"
-    to?: string
-  }
-
   return jsonRoute(async () => {
-    if (action === "drop") {
+    const { config, tableName, action, to } = await readJson<{
+      config: DatabaseConfig
+      tableName: string
+      action: (typeof TABLE_ADMIN_ACTIONS)[number]
+      to?: string
+    }>(request)
+    const validAction = assertOneOf(action, TABLE_ADMIN_ACTIONS, "table action")
+
+    if (validAction === "drop") {
       await dropTable(config, tableName)
       return { message: `Table "${tableName}" dropped` }
     }
 
-    if (action === "truncate") return truncateTable(config, tableName)
+    if (validAction === "truncate") return truncateTable(config, tableName)
 
     if (!to?.trim()) throw new Error("A rename needs the new table name")
     return alterTable(config, tableName, { action: "rename-table", to })

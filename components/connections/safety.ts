@@ -10,10 +10,11 @@ export async function takeSafetySnapshot(
   config: DatabaseConfig,
   tableName: string,
   enabled: boolean,
+  maxSnapshots?: number,
 ): Promise<{ ok: true; note: string } | { ok: false; error: string }> {
   if (!enabled) return { ok: true, note: "" }
 
-  const result = await api.createSnapshot(config, tableName)
+  const result = await api.createSnapshot(config, tableName, undefined, maxSnapshots)
   if (!result.ok) {
     return { ok: false, error: `No safety snapshot could be taken, so nothing was changed: ${result.error}` }
   }

@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { errorMessage } from "@/lib/utils"
 import Link from "next/link"
 import {
   Database,
@@ -106,7 +107,7 @@ export default function SettingsPage() {
 
   const [usage, setUsage] = useState<{ datasets: number; rows: number; bytes: number } | null>(null)
   const [runs, setRuns] = useState(0)
-  const [message, setMessage] = useState<{ tone: "success" | "warning"; text: string } | null>(null)
+  const [message, setMessage] = useState<{ tone: "success" | "warning" | "error"; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
   const refreshUsage = useCallback(async () => {
@@ -114,18 +115,30 @@ export default function SettingsPage() {
     setRuns(RunHistory.getAll().length)
   }, [])
 
-  // IndexedDB and localStorage are only readable in the browser.
   useEffect(() => {
-    void refreshUsage()
+    void refreshUsage().catch((caught) => {
+      setMessage({ tone: "error", text: `Could not read workspace storage: ${errorMessage(caught)}` })
+    })
   }, [refreshUsage])
 
-  const prune = useCallback(async () => {
+  const runStorageAction = useCallback(async (action: () => Promise<void>, success: () => void) => {
     setBusy(true)
     setMessage(null)
     try {
+      await action()
+      await refreshUsage()
+      success()
+    } catch (caught) {
+      setMessage({ tone: "error", text: `The storage action failed: ${errorMessage(caught)}` })
+    } finally {
+      setBusy(false)
+    }
+  }, [refreshUsage])
+
+  const prune = useCallback(() => {
+    return runStorageAction(async () => {
       const { removed, remaining } = await Workspace.prune(retention)
       const trimmedRuns = RunHistory.trim(retention.maxRunHistory)
-      await refreshUsage()
       setMessage({
         tone: removed.length > 0 || trimmedRuns > 0 ? "warning" : "success",
         text:
@@ -133,26 +146,22 @@ export default function SettingsPage() {
             ? `Nothing to prune. ${remaining} datasets and ${runs} runs are within the limits.`
             : `Removed ${removed.length} dataset${removed.length === 1 ? "" : "s"} and ${trimmedRuns} run${trimmedRuns === 1 ? "" : "s"}.`,
       })
-    } finally {
-      setBusy(false)
-    }
-  }, [refreshUsage, retention, runs])
+    }, () => undefined)
+  }, [retention, runs, runStorageAction])
 
-  const clearDatasets = useCallback(async () => {
-    setBusy(true)
-    await Workspace.clear()
-    await refreshUsage()
-    setBusy(false)
-    setMessage({ tone: "warning", text: "Every stored dataset was deleted from this browser." })
-  }, [refreshUsage])
+  const clearDatasets = useCallback(() => {
+    return runStorageAction(
+      () => Workspace.clear(),
+      () => setMessage({ tone: "warning", text: "Every stored dataset was deleted from this browser." }),
+    )
+  }, [runStorageAction])
 
-  const clearHistory = useCallback(async () => {
-    setBusy(true)
-    RunHistory.clear()
-    await refreshUsage()
-    setBusy(false)
-    setMessage({ tone: "warning", text: "Run history was cleared." })
-  }, [refreshUsage])
+  const clearHistory = useCallback(() => {
+    return runStorageAction(
+      async () => RunHistory.clear(),
+      () => setMessage({ tone: "warning", text: "Run history was cleared." }),
+    )
+  }, [runStorageAction])
 
   return (
     <div className="text-foreground">
@@ -253,7 +262,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <p className="text-sm font-medium">Density</p>
                 <Select value={tableDensity} onValueChange={(value) => setTableDensity(value as TableDensity)}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full" aria-label="Density">
                     <SelectValue placeholder="Select density" />
                   </SelectTrigger>
                   <SelectContent>
@@ -441,7 +450,7 @@ export default function SettingsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-muted-foreground">
-              <p>Connections and run history are stored in this browser's localStorage, passwords included. They never leave the device except in the request that opens the connection.</p>
+              <p>Connections and run history are stored in this browser&apos;s localStorage, passwords included. They never leave the device except in the request that opens the connection.</p>
               <p>Datasets are stored in IndexedDB. Snapshots are stored inside the target database as real tables named <code className="text-xs">_ingesta_snap_*</code>.</p>
             </CardContent>
           </Card>
@@ -462,13 +471,15 @@ function SettingsSwitch({
   checked: boolean
   onCheckedChange: (value: boolean) => void
 }) {
+  const inputId = `setting-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+
   return (
     <div className="flex items-start justify-between gap-4 rounded-xl border p-4">
       <div className="min-w-0">
-        <p className="font-medium">{title}</p>
+        <label htmlFor={inputId} className="font-medium">{title}</label>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch id={inputId} checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   )
 }
@@ -492,14 +503,17 @@ function SettingsNumber({
   unit: string
   onChange: (value: number) => void
 }) {
+  const inputId = `setting-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+
   return (
     <div className="flex flex-wrap items-start justify-between gap-4 rounded-xl border p-4">
       <div className="min-w-0 flex-1">
-        <p className="font-medium">{title}</p>
+        <label htmlFor={inputId} className="font-medium">{title}</label>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
       <div className="flex items-center gap-2">
         <Input
+          id={inputId}
           type="number"
           value={value}
           min={min}
@@ -509,7 +523,6 @@ function SettingsNumber({
           onChange={(event) => {
             const parsed = Number(event.target.value)
             if (!Number.isFinite(parsed)) return
-            // Clamp on change rather than on blur so the stored value is always usable.
             onChange(Math.min(max, Math.max(min, Math.trunc(parsed))))
           }}
         />
@@ -518,7 +531,6 @@ function SettingsNumber({
     </div>
   )
 }
-
 function PreviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-4">

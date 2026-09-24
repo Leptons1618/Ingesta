@@ -52,6 +52,8 @@ export function SelectionBar({
             value={connection?.id ?? null}
             onChange={onConnectionChange}
             placeholder={connections.length === 0 ? "No saved connections" : "Select a connection"}
+            id="table-studio-connection"
+            ariaLabel="Connection"
           />
         </div>
 

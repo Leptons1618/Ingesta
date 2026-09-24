@@ -23,7 +23,6 @@ import { buildWorkflowGuidance } from "@/lib/workflow-insights"
 import type {
   CreatedTable,
   DatabaseConfig,
-  DatabaseTable,
   FailedTable,
   OperationResult,
   ParsedWorkbook,
@@ -38,7 +37,6 @@ export default function ImportPage() {
   const [workbook, setWorkbook] = useState<ParsedWorkbook | null>(null)
   const [connections, setConnections] = useState<DatabaseConfig[]>([])
   const [connection, setConnection] = useState<DatabaseConfig | null>(null)
-  const [databaseTables, setDatabaseTables] = useState<DatabaseTable[]>([])
   const [queue, setQueue] = useState<SheetInput[]>([])
   const [created, setCreated] = useState<CreatedTable[]>([])
   const [failed, setFailed] = useState<FailedTable[]>([])
@@ -63,17 +61,23 @@ export default function ImportPage() {
     setIsAnalyzing(true)
     setError(null)
 
-    const parsed = await parseWorkbooks(files)
-    setWorkbook(parsed)
-    setIsAnalyzing(false)
+    try {
+      const parsed = await parseWorkbooks(files)
+      setWorkbook(parsed)
 
-    if (parsed.files.length === 0) {
-      setError(parsed.errors.join(" ") || "None of the selected files contained a readable sheet")
-      return
+      if (parsed.files.length === 0) {
+        setError(parsed.errors.join(" ") || "None of the selected files contained a readable sheet")
+        return
+      }
+
+      setError(parsed.errors.length > 0 ? parsed.errors.join(" ") : null)
+      setStep(2)
+    } catch (caught) {
+      setWorkbook(null)
+      setError(caught instanceof Error ? caught.message : "The selected files could not be read")
+    } finally {
+      setIsAnalyzing(false)
     }
-
-    setError(parsed.errors.length > 0 ? parsed.errors.join(" ") : null)
-    setStep(2)
   }, [files])
 
   const reset = useCallback(() => {
@@ -81,7 +85,6 @@ export default function ImportPage() {
     setFiles([])
     setWorkbook(null)
     setConnection(null)
-    setDatabaseTables([])
     setQueue([])
     setCreated([])
     setFailed([])
@@ -91,9 +94,8 @@ export default function ImportPage() {
     setError(null)
   }, [])
 
-  const selectConnection = useCallback((config: DatabaseConfig, tables: DatabaseTable[]) => {
+  const selectConnection = useCallback((config: DatabaseConfig) => {
     setConnection(config)
-    setDatabaseTables(tables)
     setQueue([])
     setCreated([])
     setFailed([])

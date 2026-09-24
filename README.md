@@ -267,3 +267,10 @@ the SQL, DDL and type-mapping level; their drivers are not run.
   language, guardrails, snapshots and retention.
 - [docs/API.md](docs/API.md) — the sixteen routes, with request bodies, payloads and error shapes.
 - [docs/TRACKER.md](docs/TRACKER.md) — what has been verified, and the known limitations.
+- [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) — page screenshots and the browser checks behind them.
+
+## User guide
+
+The complete walkthrough is in [docs/USER_GUIDE.md](docs/USER_GUIDE.md). It covers the six pages,
+the import wizard, saved connections, dataset cleanup and validation, Table Studio, snapshots,
+guardrails, storage retention, keyboard navigation, and recovery from common errors.

@@ -61,7 +61,7 @@ sidebar and the command palette.
 ## The seven stages
 
 `components/workflow-stepper.tsx` exports `WORKFLOW_STAGES`, the single source of truth for the
-stage list. `app/page.tsx` owns the step index and renders one component per stage.
+stage list. `app/import/page.tsx` owns the step index and renders one component per stage.
 
 | # | Stage | Owner | What it does |
 |---|-------|-------|--------------|
@@ -136,15 +136,18 @@ Hop by hop:
 
 Two files, and the split between them is the point.
 
-- **`lib/db/dialect.ts`** holds the only per-engine code. One `Dialect` object per engine supplies
-  `quote`, `placeholder`, `autoIdColumn`, `adminDatabase`, `databasesSql`, `tablesSql`,
-  `columnsSql`, `countSql`, `previewSql`, `versionSql`, `serverVersion` and `open`. `createTableSql`
-  builds the `CREATE TABLE` statement from the dialect plus the config; `withSession` opens a
-  session, runs the callback, and closes the session whether it resolves or throws. Drivers are
-  imported lazily inside `open()`, so no database driver reaches the client bundle.
-- **`lib/db/index.ts`** implements each operation exactly once: `testConnection`, `listDatabases`,
-  `createDatabase`, `getTables`, `createTable`, `insertData`, `insertDataInBatches`, `previewTable`.
-  No operation knows which engine it is talking to.
+`lib/db/dialect.ts` holds the only per-engine code. One `Dialect` object per engine supplies
+`quote`, `placeholder`, `autoIdColumn`, `adminDatabase`, `databasesSql`, `tablesSql`,
+`columnsSql`, `countSql`, `previewSql`, `versionSql`, `serverVersion` and `open`. `createTableSql`
+builds the `CREATE TABLE` statement from the dialect plus the config; `withSession` opens a
+session, runs the callback, and closes the session whether it resolves or throws. Drivers are
+imported lazily inside `open()`, so no database driver reaches the client bundle.
+
+`lib/db/index.ts` implements each operation exactly once: `testConnection`, `listDatabases`,
+`createDatabase`, `dropDatabase`, `getTables`, `createTable`, `insertData`, `insertDataInBatches`,
+`previewTable`, `getTableStructure`, `alterTable`, `dropTable`, `truncateTable`, `mutateRows`,
+`copyTable`, `runQuery`, `createSnapshot`, `listSnapshots`, `restoreSnapshot` and `dropSnapshot`.
+No operation knows which engine it is talking to.
 
 Every route handler in `app/api/*/route.ts` is a thin wrapper: parse the body, call one function
 from `lib/db`, return it through `jsonRoute` (`lib/http.ts`). The one exception is
@@ -243,7 +246,7 @@ These are invariants, not preferences. Changing one changes behaviour users depe
 
 ## Verifying a change
 
-Six runnable checks exercise the real modules — no mocks, no test framework:
+Seven runnable checks exercise the real modules — no mocks, no test framework:
 
 ```bash
 bun scripts/check-pipeline.ts     # parse -> detect -> transform -> DDL, all four engines
@@ -252,18 +255,8 @@ bun scripts/check-data.ts         # the /data round trip end to end
 bun scripts/check-table-ops.ts    # real SQLite: structure, paging, alter, mutate, snapshots, query
 bun scripts/check-tables.ts       # the Table Studio plan: ordering, payloads, gates, partial failure
 bun scripts/check-sqlite.ts       # real SQLite file: create, insert, preview, introspect
+bun scripts/check-import-execution.ts # import policy, batch telemetry, and the real insert route
 ```
 
-`check-pipeline.ts` builds a workbook in memory, runs it through `parseWorkbooks`, `analyzeSheet`,
-`transformDataRows` and `createTableSql`, and asserts the invariants above: a bare number is never a
-date, duplicate headers are suffixed, rows are padded to the header width, sub-second drift rounds
-to the nearest second, samples keep their detected type, and each engine quotes, parameterises and
-maps types as documented. `check-sqlite.ts` drives `lib/db` against a throwaway SQLite file and
-asserts that NULL survives the round trip, that a `NOT NULL` violation rolls the whole batch back,
-that booleans land as `1`/`0`, and that introspection reports keys and nullability correctly.
-
-`check-workspace.ts`, `check-data.ts` and `check-tables.ts` cover the workspace half; they are
-described in [WORKSPACE.md](WORKSPACE.md#verifying-a-change). `check-table-ops.ts` covers the
-database operations the explorer and the studio depend on.
-
-All six are wired to `pnpm check`; `pnpm check:types` type-checks the app and the scripts.
+`pnpm check` runs all seven scripts in order. `pnpm check:types` type-checks the app and the scripts,
+and `pnpm lint` runs the ESLint CLI.

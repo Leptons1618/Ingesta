@@ -1,5 +1,5 @@
 import { insertDataInBatches } from "@/lib/db"
-import { RouteFailure, jsonRoute } from "@/lib/http"
+import { RouteFailure, jsonRoute, readJson } from "@/lib/http"
 import { normalizeInsertExecution, prepareInsertRows } from "@/lib/import-execution"
 import type { DatabaseConfig, InsertExecutionOptions, InsertReport } from "@/lib/types"
 
@@ -30,17 +30,17 @@ function failureMessage(report: InsertReport): string {
  * rows were written".
  */
 export async function POST(request: Request) {
-  const { config, tableName, columnNames, data, columnTypes, execution } = (await request.json()) as {
-    config: DatabaseConfig
-    tableName: string
-    columnNames: string[]
-    data: unknown[][]
-    /** The type each column was configured with; only read when `convertTypes` is on. */
-    columnTypes?: string[]
-    execution?: Partial<InsertExecutionOptions>
-  }
-
   return jsonRoute(async (): Promise<InsertReport> => {
+    const { config, tableName, columnNames, data, columnTypes, execution } = await readJson<{
+      config: DatabaseConfig
+      tableName: string
+      columnNames: string[]
+      data: unknown[][]
+      /** The type each column was configured with; only read when `convertTypes` is on. */
+      columnTypes?: string[]
+      execution?: Partial<InsertExecutionOptions>
+    }>(request)
+
     const startedAt = Date.now()
     const policy = normalizeInsertExecution(execution)
     const prepared = prepareInsertRows(data, columnTypes, policy)

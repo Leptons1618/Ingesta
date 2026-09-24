@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 /**
  * Last-resort boundary: it replaces the root layout, so it renders its own
  * `<html>`/`<body>` and imports nothing from the app — a failure in the shell,
@@ -67,7 +68,7 @@ export default function GlobalError({
             >
               Try again
             </button>
-            <a
+            <Link
               href="/"
               style={{
                 padding: "0.5rem 1rem",
@@ -80,7 +81,7 @@ export default function GlobalError({
               }}
             >
               Back to dashboard
-            </a>
+            </Link>
           </div>
         </main>
       </body>

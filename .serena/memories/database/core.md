@@ -1,0 +1,5 @@
+- `lib/db/dialect.ts` owns per-engine SQL/driver differences; `lib/db/index.ts` owns each operation once.
+- API routes use `readJson` inside `jsonRoute`; action/mode/mutation unions are checked before db dispatch.
+- Import batches are one transaction per chunk, and route failures preserve partial telemetry through `RouteFailure`.
+- Snapshots are real tables in `_ingesta_`; create trims old snapshots per source table when a limit is supplied.
+- SQLite is the only database exercised live by repository checks.

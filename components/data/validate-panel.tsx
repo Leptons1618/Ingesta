@@ -392,7 +392,7 @@ function RuleEditor({
           {patternError ? (
             <p className="text-xs text-destructive">{patternError}</p>
           ) : (
-            <p className="text-xs text-muted-foreground">Tested against the cell's text.</p>
+            <p className="text-xs text-muted-foreground">Tested against the cell&apos;s text.</p>
           )}
         </div>
       ) : null}

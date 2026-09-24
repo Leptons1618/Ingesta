@@ -27,8 +27,6 @@ import { newId } from "@/lib/utils"
 export interface OperationOutcome {
   grid: Grid
   effect: OperationEffect
-  /** Present for `validate`, which reads the data without changing it. */
-  findings?: ValidationFinding[]
 }
 
 /** Findings are capped so one broken column cannot produce a million rows. */

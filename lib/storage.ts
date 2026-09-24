@@ -314,5 +314,9 @@ function read<T>(key: string, fallback: T): T {
 
 function write(key: string, value: unknown): void {
   if (typeof window === "undefined") return
-  window.localStorage.setItem(key, JSON.stringify(value))
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch (error) {
+    throw new Error(`Browser storage could not save ${key}: ${error instanceof Error ? error.message : "unknown error"}`)
+  }
 }

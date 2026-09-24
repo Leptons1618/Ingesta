@@ -50,7 +50,7 @@ export function ExpressionField({
   return (
     <div className={cn("space-y-2", className)}>
       <div className="flex items-center justify-between gap-2">
-        <label className="text-sm font-medium">{label}</label>
+        <label htmlFor="expression-field" className="text-sm font-medium">{label}</label>
         <Button
           type="button"
           variant="ghost"
@@ -64,6 +64,7 @@ export function ExpressionField({
       </div>
 
       <Input
+        id="expression-field"
         value={value}
         disabled={disabled}
         placeholder={placeholder}

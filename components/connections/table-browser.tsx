@@ -59,6 +59,7 @@ export function TableBrowser({
 }: TableBrowserProps) {
   const pageSize = useAppSettingsStore((state) => state.guardrails.maxRowsPerPage)
   const snapshotBeforeMutation = useAppSettingsStore((state) => state.guardrails.snapshotBeforeMutation)
+  const maxSnapshots = useAppSettingsStore((state) => state.retention.maxSnapshotsPerTable)
   const { ask, gate } = useGuardrailConfirm()
 
   const [page, setPage] = useState(0)
@@ -121,22 +122,21 @@ export function TableBrowser({
   const pageCount = Math.max(1, Math.ceil((result?.totalRows ?? 0) / pageSize))
 
   const handleSnapshot = useCallback(async () => {
-    const response = await api.createSnapshot(config.current, table.name)
+    const response = await api.createSnapshot(config.current, table.name, undefined, maxSnapshots)
     if (!response.ok) {
       toast.error(`Could not snapshot "${table.name}"`, response.error)
       return
     }
 
     toast.success(`Snapshot ${response.data.name} taken`, `${response.data.rowCount.toLocaleString()} rows stored.`)
-    onTablesChanged()
-  }, [onTablesChanged, table.name])
+  }, [maxSnapshots, table.name])
 
   const handleTruncate = useCallback(() => {
     ask({
       assessment: assessTruncate(table.name, table.rowCount),
       confirmLabel: "Delete every row",
       run: async () => {
-        const safety = await takeSafetySnapshot(config.current, table.name, snapshotBeforeMutation)
+        const safety = await takeSafetySnapshot(config.current, table.name, snapshotBeforeMutation, maxSnapshots)
         if (!safety.ok) {
           toast.error("Nothing was deleted", safety.error)
           return
@@ -156,14 +156,14 @@ export function TableBrowser({
         setReload((value) => value + 1)
       },
     })
-  }, [ask, onTablesChanged, snapshotBeforeMutation, table.name, table.rowCount])
+  }, [ask, maxSnapshots, onTablesChanged, snapshotBeforeMutation, table.name, table.rowCount])
 
   const handleDrop = useCallback(() => {
     ask({
       assessment: assessDropTable(table.name, table.rowCount),
       confirmLabel: "Drop table",
       run: async () => {
-        const safety = await takeSafetySnapshot(config.current, table.name, snapshotBeforeMutation)
+        const safety = await takeSafetySnapshot(config.current, table.name, snapshotBeforeMutation, maxSnapshots)
         if (!safety.ok) {
           toast.error("Nothing was dropped", safety.error)
           return
@@ -180,7 +180,7 @@ export function TableBrowser({
         onTableGone()
       },
     })
-  }, [ask, onTableGone, onTablesChanged, snapshotBeforeMutation, table.name, table.rowCount])
+  }, [ask, maxSnapshots, onTableGone, onTablesChanged, snapshotBeforeMutation, table.name, table.rowCount])
 
   const handleRename = useCallback(
     async (to: string) => {

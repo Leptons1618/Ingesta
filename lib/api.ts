@@ -148,10 +148,10 @@ export const api = {
   listSnapshots: (config: DatabaseConfig) =>
     unwrap("/api/snapshots", { config, action: "list" }, (payload: { snapshots: TableSnapshot[] }) => payload.snapshots),
 
-  createSnapshot: (config: DatabaseConfig, tableName: string, name?: string) =>
+  createSnapshot: (config: DatabaseConfig, tableName: string, name?: string, maxSnapshots?: number) =>
     unwrap(
       "/api/snapshots",
-      { config, action: "create", tableName, snapshotName: name },
+      { config, action: "create", tableName, snapshotName: name, maxSnapshots },
       (payload: { snapshot: TableSnapshot }) => payload.snapshot,
     ),
 

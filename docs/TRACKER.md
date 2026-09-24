@@ -455,8 +455,9 @@ settings density, and one real SQL Server bug.
 ## Verification
 
 - [x] `pnpm check:types` — `tsc --noEmit` over the app and over `scripts/`, zero diagnostics.
-- [x] `pnpm build` — production build compiles; the route table is exactly `/`, `/settings` and the
-  seven `POST` routes.
+- [x] `pnpm lint` — ESLint CLI, zero errors and zero warnings.
+- [x] `pnpm build` — production build compiles with the six page routes and sixteen `POST` API routes.
+- [x] `pnpm check` — all seven Bun assertion scripts pass.
 - [x] `bun scripts/check-pipeline.ts` — parse, detection, transformation and DDL assertions pass for
   all four engines.
 - [x] `bun scripts/check-sqlite.ts` — real SQLite round trip: create, insert (NULLs, booleans, a
@@ -470,19 +471,14 @@ settings density, and one real SQL Server bug.
 - [x] The partial-failure path was exercised for real: a second run against the same database hit
   `already exists`, the run continued to the verify stage with the failure named, and the summary
   reported it instead of wedging.
-- [x] All seven `POST` paths in [API.md](API.md) resolve to an `app/api/<name>/route.ts` file, and
-  `app/api/` contains exactly those seven directories.
+- [x] Every route path in [API.md](API.md) resolves to an `app/api/<name>/route.ts` file.
 - [x] Every file path referenced in [README.md](../README.md), [ARCHITECTURE.md](ARCHITECTURE.md)
-  and [API.md](API.md) resolves on disk, including every entry of the README project-structure
-  tree.
+  and [API.md](API.md) resolves on disk, including every entry of the README project-structure tree.
 - [x] Every type, function and module name referenced in [ARCHITECTURE.md](ARCHITECTURE.md) is
   declared in `lib/`, `components/` or `app/`.
 - [x] The engine differences in the [ARCHITECTURE.md](ARCHITECTURE.md) table were read from
   `lib/db/dialect.ts` and the type overrides in `lib/schema.ts`, not from the old documentation.
-- [x] The counts in **Done** (11 flat routes, 24 routes under `app/api/`, 1503 lines of
-  `lib/database-manager.ts`, 32 removed dependencies) come from the pre-refactor tree in git.
-- [x] No `console.log` in `app/`, `components/` or `lib/` — the only ones left are the two check
-  scripts' success lines.
+- [x] No `console.log` remains in `app/`, `components/` or `lib/`.
 
 Not covered: the PostgreSQL, MySQL and SQL Server paths were not run against live servers. Their
 dialect SQL, DDL and type mappings are asserted in `check-pipeline.ts`, but the drivers themselves
@@ -517,6 +513,8 @@ Each of these is a deliberate ceiling with a known upgrade path.
 - **`_ingesta_` is a reserved table-name prefix.** `listTables` hides those tables so snapshots do
   not appear as user tables. A database that already uses that prefix for its own tables would hide
   them too.
+- **Snapshots are pruned per source table.** Creating a snapshot trims the oldest database-side copies
+  for that table to the Settings limit; the UI passes the limit with each create request.
 - **Snapshots live inside the database they protect.** Dropping the database takes its snapshots
   with it. That is why `assessDropDatabase` says so explicitly.
 - **No resume or retry per table.** A failed sheet is retried by running the workflow again; there

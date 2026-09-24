@@ -100,18 +100,21 @@ export function CommandPalette({
             value={query}
             spellCheck={false}
             autoComplete="off"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-results"
+            aria-activedescendant={results[activeIndex] ? `command-palette-option-${activeIndex}` : undefined}
             aria-label="Search pages"
             placeholder="Search pages…"
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleKeyDown}
-            className="h-12 w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
           <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
             Esc
           </kbd>
         </div>
 
-        <div ref={listRef} role="listbox" aria-label="Pages" className="max-h-80 overflow-y-auto p-1">
+        <div id="command-palette-results" ref={listRef} role="listbox" aria-label="Pages" className="max-h-80 overflow-y-auto p-1">
           {results.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-muted-foreground">
               Nothing matches “{query}”.
@@ -119,6 +122,7 @@ export function CommandPalette({
           ) : (
             results.map((item, index) => (
               <button
+                id={`command-palette-option-${index}`}
                 key={item.href}
                 type="button"
                 role="option"

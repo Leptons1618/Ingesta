@@ -15,20 +15,22 @@ const SQLITE_EXTENSIONS = [".db", ".sqlite", ".sqlite3"]
 const MAX_SQLITE_FILES = 20
 
 function probePort(port: number): Promise<boolean> {
-  const { promise, resolve } = Promise.withResolvers<boolean>()
-  const socket = connect({ host: "127.0.0.1", port })
+  return new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port })
+    let settled = false
 
-  const settle = (reachable: boolean) => {
-    socket.destroy()
-    resolve(reachable)
-  }
+    const settle = (reachable: boolean) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(reachable)
+    }
 
-  socket.setTimeout(PROBE_TIMEOUT_MS)
-  socket.once("connect", () => settle(true))
-  socket.once("timeout", () => settle(false))
-  socket.once("error", () => settle(false))
-
-  return promise
+    socket.setTimeout(PROBE_TIMEOUT_MS)
+    socket.once("connect", () => settle(true))
+    socket.once("timeout", () => settle(false))
+    socket.once("error", () => settle(false))
+  })
 }
 
 /** Databases the app itself has written, sitting next to it. */

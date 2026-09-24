@@ -236,9 +236,18 @@ try {
   )
 
   /* ------------------------------------------- snapshot round trip */
-
   const snapshot = await api.createSnapshot(config, "orders")
   if (!snapshot.ok) throw new Error(snapshot.error)
+  assert.equal(snapshot.data.rowCount, 3)
+  const invalidSnapshot = await snapshotsPost(new Request("http://stub/api/snapshots", { method: "POST", body: JSON.stringify({ config, action: "unknown" }) }))
+  assert.equal(invalidSnapshot.status, 500)
+  assert.match((await invalidSnapshot.json()).message, /Invalid snapshot action/)
+  const invalidAdmin = await tableAdminPost(new Request("http://stub/api/table-admin", { method: "POST", body: JSON.stringify({ config, tableName: "orders", action: "unknown" }) }))
+  assert.equal(invalidAdmin.status, 500)
+  assert.match((await invalidAdmin.json()).message, /Invalid table action/)
+  const invalidRows = await tableRowsPost(new Request("http://stub/api/table-rows", { method: "POST", body: JSON.stringify({ config, tableName: "orders", mutation: { action: "unknown" } }) }))
+  assert.equal(invalidRows.status, 500)
+  assert.match((await invalidRows.json()).message, /Invalid row mutation/)
   assert.equal(snapshot.data.rowCount, 3)
 
   await api.truncateTable(config, "orders")

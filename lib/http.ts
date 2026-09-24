@@ -35,3 +35,20 @@ export async function jsonRoute<T extends object>(run: () => Promise<T>) {
     return NextResponse.json({ success: false, message: errorMessage(error) }, { status: 500 })
   }
 }
+
+/** Parse a JSON request body and keep malformed input on the standard error path. */
+export async function readJson<T>(request: Request): Promise<T> {
+  try {
+    return (await request.json()) as T
+  } catch {
+    throw new Error("Request body must be valid JSON")
+  }
+}
+
+/** Reject unknown values before a route can fall through to a destructive default. */
+export function assertOneOf<const T extends readonly string[]>(value: unknown, allowed: T, label: string): T[number] {
+  if (typeof value !== "string" || !allowed.includes(value)) {
+    throw new Error(`Invalid ${label}; expected one of: ${allowed.join(", ")}`)
+  }
+  return value as T[number]
+}

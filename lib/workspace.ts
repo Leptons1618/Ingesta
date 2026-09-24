@@ -16,7 +16,6 @@ import type { Dataset, DatasetSummary, Grid, OperationEntry, RetentionPolicy } f
 const DATABASE_NAME = "ingesta-workspace"
 const DATABASE_VERSION = 1
 const DATASETS = "datasets"
-const META = "meta"
 
 /** The stored record: a base grid plus the operations applied on top of it. */
 interface DatasetRecord {
@@ -28,6 +27,8 @@ interface DatasetRecord {
   operations: OperationEntry[]
   createdAt: string
   updatedAt: string
+  /** Cached list/usage metadata; old records are backfilled on their next list. */
+  summary?: DatasetSummary
 }
 
 const hasIndexedDb = () => typeof indexedDB !== "undefined"
@@ -42,7 +43,6 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const database = request.result
       if (!database.objectStoreNames.contains(DATASETS)) database.createObjectStore(DATASETS, { keyPath: "id" })
-      if (!database.objectStoreNames.contains(META)) database.createObjectStore(META)
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error("Could not open the workspace database"))
@@ -90,6 +90,8 @@ export function datasetGrid(dataset: Dataset): Grid {
 }
 
 function summarise(record: DatasetRecord): DatasetSummary {
+  if (record.summary) return record.summary
+
   const grid = datasetGrid(resolveDataset(record))
   return {
     id: record.id,
@@ -106,7 +108,7 @@ function summarise(record: DatasetRecord): DatasetSummary {
 }
 
 function asRecord(dataset: Dataset): DatasetRecord {
-  return {
+  const record: DatasetRecord = {
     id: dataset.id,
     name: dataset.name,
     sourceFile: dataset.sourceFile,
@@ -116,16 +118,24 @@ function asRecord(dataset: Dataset): DatasetRecord {
     createdAt: dataset.createdAt,
     updatedAt: dataset.updatedAt,
   }
+  return { ...record, summary: summarise(record) }
 }
 
 export const Workspace = {
-  available: hasIndexedDb,
-
-  /** Summaries only — the rows never leave IndexedDB for a list view. */
+  /** Summaries only — new records carry cached metadata; legacy records are backfilled once. */
   async list(): Promise<DatasetSummary[]> {
     if (!hasIndexedDb()) return []
     const records = await transact<DatasetRecord[]>(DATASETS, "readonly", (store) => store.getAll() as IDBRequest<DatasetRecord[]>)
-    return records.map(summarise).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    const summaries = records.map(summarise)
+    const legacy = records.filter((record) => !record.summary)
+    if (legacy.length > 0) {
+      await Promise.all(
+        legacy.map((record, index) =>
+          transact(DATASETS, "readwrite", (store) => store.put({ ...record, summary: summaries[index] })),
+        ),
+      )
+    }
+    return summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   },
 
   async get(id: string): Promise<Dataset | null> {

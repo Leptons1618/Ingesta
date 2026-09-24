@@ -1,8 +1,10 @@
 import { listDatabases } from "@/lib/db"
-import { jsonRoute } from "@/lib/http"
+import { jsonRoute, readJson } from "@/lib/http"
 import type { ServerOptions } from "@/lib/types"
 
 export async function POST(request: Request) {
-  const { config } = (await request.json()) as { config: ServerOptions }
-  return jsonRoute(async () => ({ databases: await listDatabases(config) }))
+  return jsonRoute(async () => {
+    const { config } = await readJson<{ config: ServerOptions }>(request)
+    return { databases: await listDatabases(config) }
+  })
 }

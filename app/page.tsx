@@ -145,7 +145,7 @@ export default function DashboardPage() {
               <Link
                 key={action.href}
                 href={action.href}
-                className="group flex items-center gap-3 rounded-2xl border bg-card p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm"
+                className="group flex min-w-0 items-center gap-3 rounded-2xl border bg-card p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm"
               >
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                   <Icon className="h-5 w-5" />

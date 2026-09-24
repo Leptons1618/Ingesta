@@ -368,6 +368,8 @@ export async function alterTable(
         for (const statement of statements) await session.query(statement)
         return { message: `Column "${change.column}" is now ${change.type}` }
       }
+      default:
+        throw new Error("Unsupported table alteration")
     }
   })
 }
@@ -454,8 +456,6 @@ export async function mutateRows(
     const records = mutation.records ?? []
     if (records.length === 0) return { affectedRows: 0 }
 
-    // The column list is the union of the keys the records carry, in first-seen
-    // order; a record that omits one of them binds NULL for it.
     const columns = [...new Set(records.flatMap((record) => Object.keys(record)))]
     if (columns.length === 0) throw new Error("An insert needs at least one column")
     const names = columns.map((column) => dialect.quote(column)).join(", ")
@@ -574,12 +574,10 @@ export async function copyTable(
     const sourceCount = Number((await session.query<{ cnt: unknown }>(dialect.countSql(source)))[0]?.cnt ?? 0)
 
     if (mode === "create") {
-      // CREATE TABLE … AS SELECT refuses an existing target on its own.
       await session.query(dialect.createTableAsSql(target, source))
       return { copiedRows: sourceCount }
     }
 
-    // Rows are matched by column name, so only the names both tables have can travel.
     const sourceColumns = await columnNames(session.query, dialect, source)
     const targetColumns = await columnNames(session.query, dialect, target)
     const shared = sourceColumns.filter((column) => targetColumns.includes(column))
@@ -666,6 +664,7 @@ export async function createSnapshot(
   config: DatabaseConfig,
   tableName: string,
   name?: string,
+  maxSnapshots = 5,
 ): Promise<TableSnapshot> {
   assertConnection(config)
   const dialect = dialectFor(config.type)
@@ -673,8 +672,6 @@ export async function createSnapshot(
   return withSession(config, async (session) => {
     await ensureRegistry(session, dialect)
 
-    // A caller-supplied name is sanitised, prefixed and trimmed too, so every
-    // snapshot stays out of the table explorer and inside the engine's limit.
     const storage = name?.trim()
       ? `${SNAPSHOT_PREFIX}${sanitizeTableName(name)}`.slice(0, dialect.identifierLimit)
       : generatedSnapshotName(dialect, tableName)
@@ -690,6 +687,20 @@ export async function createSnapshot(
     await session.transaction(async (query) => {
       await query(dialect.createTableAsSql(storage, tableName))
       await query(`INSERT INTO ${registry} (${columns}) VALUES (${values})`, [storage, tableName, rowCount, createdAt])
+
+      const retention = Math.max(0, Math.floor(maxSnapshots))
+      if (retention > 0) {
+        const existing = await query<Record<string, unknown>>(
+          `SELECT ${dialect.quote("name")} FROM ${registry} WHERE ${dialect.quote("source_table")} = ${dialect.placeholder(0)} ORDER BY ${dialect.quote("created_at")} ASC, ${dialect.quote("name")} ASC`,
+          [tableName],
+        )
+        const excess = Math.max(0, existing.length - retention)
+        for (const row of existing.slice(0, excess)) {
+          const oldName = String(row.name)
+          await query(`DROP TABLE ${dialect.quote(oldName)}`)
+          await query(`DELETE FROM ${registry} WHERE ${dialect.quote("name")} = ${dialect.placeholder(0)}`, [oldName])
+        }
+      }
     })
 
     return { name: storage, table: tableName, rowCount, createdAt }

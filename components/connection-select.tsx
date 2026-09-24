@@ -19,6 +19,8 @@ export function ConnectionSelect({
   placeholder = "Select a connection",
   disabled,
   className,
+  id,
+  ariaLabel,
 }: {
   connections: DatabaseConfig[]
   /** The selected connection id. */
@@ -27,6 +29,8 @@ export function ConnectionSelect({
   placeholder?: string
   disabled?: boolean
   className?: string
+  id?: string
+  ariaLabel?: string
 }) {
   const ordered = ConnectionStorage.sortForDisplay(connections)
 
@@ -36,7 +40,7 @@ export function ConnectionSelect({
       disabled={disabled}
       onValueChange={(id) => onChange(connections.find((connection) => connection.id === id) ?? null)}
     >
-      <SelectTrigger className={cn("w-full", className)}>
+      <SelectTrigger id={id} aria-label={ariaLabel} className={cn("w-full", className)}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>

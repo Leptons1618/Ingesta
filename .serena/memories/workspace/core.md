@@ -1,0 +1,3 @@
+- Dataset records persist `base`, `operations`, and cached `summary` metadata in IndexedDB; `Workspace.list()` avoids replaying operations for records with summaries and backfills legacy records once.
+- `maxSnapshotsPerTable` is passed from Settings through `lib/api.ts` to snapshot creation; `lib/db/index.ts` prunes oldest snapshots for that source table in the same transaction.
+- `maxRowsPerDataset` truncates and reports dropped rows; it does not refuse the import.

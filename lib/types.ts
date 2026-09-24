@@ -311,13 +311,8 @@ export interface ValidationFinding {
   value: unknown
 }
 
-/** A reusable, named set of rules the user can apply to any dataset. */
-export interface ValidationProfile {
-  id: string
-  name: string
-  rules: ValidationRule[]
-  createdAt: string
-}
+/* Validation rules are stored with the current dataset state; named reusable
+ * profiles are not part of the current product surface. */
 
 /* ---------------------------------------------------------------------------
  * Datasets

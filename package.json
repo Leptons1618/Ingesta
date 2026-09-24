@@ -2,13 +2,13 @@
   "name": "ingesta",
   "version": "0.1.0",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "private": true,
   "scripts": {
     "build": "next build",
     "dev": "next dev",
-    "lint": "next lint",
+    "lint": "eslint .",
     "start": "next start",
     "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
     "check": "bun scripts/check-pipeline.ts && bun scripts/check-workspace.ts && bun scripts/check-data.ts && bun scripts/check-table-ops.ts && bun scripts/check-tables.ts && bun scripts/check-sqlite.ts && bun scripts/check-import-execution.ts",
@@ -43,10 +43,11 @@
     "react-dom": "^19",
     "sqlite3": "^5.1.7",
     "tailwind-merge": "^2.5.5",
-    "xlsx": "latest",
+    "xlsx": "0.18.5",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
     "@tailwindcss/postcss": "^4.1.9",
     "@types/mssql": "^9.1.7",
     "@types/node": "^22",
@@ -54,6 +55,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/sqlite3": "^5.1.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "15.5.12",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",
     "tw-animate-css": "1.3.3",

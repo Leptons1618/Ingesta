@@ -173,9 +173,10 @@ Two consequences worth knowing:
 | Run history | `localStorage` (`RunHistory`) | Same |
 | Preferences, retention, guardrails | `localStorage` (`useAppSettingsStore`) | Same |
 
-Datasets are listed as `DatasetSummary` — row counts, sizes and operation counts — without the rows
-ever leaving IndexedDB, so the dashboard and the dataset list stay cheap regardless of how much is
-stored.
+Datasets are listed as `DatasetSummary` — row counts, sizes and operation counts — from cached metadata
+stored with each record. New records are summarized once when they are saved; records created by older
+versions are backfilled on their next list. The dashboard and dataset list therefore do not replay
+operations on every render.
 
 ### Retention
 
@@ -184,9 +185,9 @@ stored.
 | Limit | Enforced by |
 |-------|-------------|
 | `maxDatasets` | `Workspace.prune` — oldest first |
-| `maxRowsPerDataset` | `Workspace.clampRows`, at import time |
+| `maxRowsPerDataset` | `Workspace.clampRows`, at import time; over-limit rows are truncated and reported |
 | `maxRunHistory` | `RunHistory.record` / `RunHistory.trim` |
-| `maxSnapshotsPerTable` | the snapshot path |
+| `maxSnapshotsPerTable` | `createSnapshot` — oldest snapshots for the source table are removed after a new snapshot |
 | `datasetTtlDays` | `Workspace.prune` — by `updatedAt`, `0` disables it |
 
 `Workspace.prune` returns what it removed, and the UI reports it. Retention never deletes silently.
